@@ -58,7 +58,7 @@ make -j
 
 ```bash
 cd <HOLOHUB_SOURCE_DIR>
-sudo ./run launch high_speed_endoscopy
+sudo ./holohub run high_speed_endoscopy
 ```
 
 
