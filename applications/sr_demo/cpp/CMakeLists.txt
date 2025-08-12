@@ -28,6 +28,7 @@ target_link_libraries(sr_demo
   PRIVATE
   holoscan::core
   holoscan::ops::video_stream_replayer
+  holoscan::ops::video_stream_recorder
   holoscan::ops::holoviz
   holoscan::ops::v4l2
   holoscan::ops::format_converter

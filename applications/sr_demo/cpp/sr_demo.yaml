@@ -17,10 +17,10 @@
 dual_window: false
 
 replayer:
-  directory: "/workspace/holohub/data/rgb_uncompressed_2"
-  basename: "rgb_uncompressed_2"
+  directory: "/workspace/holohub/data/ch2_concatClear"
+  basename: "ch2_concatClear"
   frame_rate: 0   # as specified in timestamps
-  repeat: true    # default: false
+  repeat: false    # default: false
   realtime: true  # default: true 
   count: 0        # default: 0 (no frame count restriction)
 
@@ -33,24 +33,24 @@ inference_preprocessor:
   in_dtype: "rgb888"
   out_tensor_name: INPUT__0
   out_dtype: "float32"
-  resize_width: 960
-  resize_height: 544
   scale_min: -1
   scale_max: 1
-  out_channel_order: [2,0,1]
+  out_channel_order: [0,1,2]
 
 sr_inference:
   model_path_map:
-    "sr": "/workspace/holohub/data/sr_upsampling/model.NVIDIARTXA6000.8.6.84.trt.8.6.1.6.engine.fp16"
+    "sr": "/workspace/holohub/data/sr_upsampling/model_1080p-4k.onnx"
   backend: "trt"
   pre_processor_map:
     "sr": ["INPUT__0"]
   inference_map:
     "sr": ["OUTPUT__0"]
+  in_tensor_names: ["INPUT__0"]
+  out_tensor_names: ["OUTPUT__0"]
   device_map:
     "sr": "0"
   input_on_cuda: true
-  is_engine_path: true
+  is_engine_path: false
   enable_fp16: true
 
 inference_postprocessor:
@@ -63,9 +63,21 @@ inference_postprocessor:
 
 holoviz:
   width: 1920
-  height: 1088
+  height: 1080
   tensors:
     - name: ""
       type: color
       opacity: 1.0
       priority: 0
+
+recorder_resize:
+  in_dtype: "rgb888"
+  out_dtype: "rgb888"
+  in_tensor_name: ""
+  out_tensor_name: "output_video"
+  resize_width: 3840
+  resize_height: 2160
+
+recorder:
+  directory: "/workspace/holohub/outputs"
+  basename: "sr_demo_output"

@@ -23,43 +23,64 @@
 #include <holoscan/operators/inference/inference.hpp>
 #include <holoscan/operators/inference_processor/inference_processor.hpp>
 #include <holoscan/operators/format_converter/format_converter.hpp>
+#include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
 
 
 class SrDemoApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
+    
+    // Create shared resources
+    auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream_pool");
+    
     auto replayer =
         make_operator<ops::VideoStreamReplayerOp>("replayer", from_config("replayer"), 
         Arg("allocator") = make_resource<UnboundedAllocator>("pool_replayer"));
-    auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
-
+    
+    auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"),
+        Arg("cuda_stream_pool") = cuda_stream_pool);
 
     auto inference = make_operator<ops::InferenceOp>(
         "inference",
         from_config("sr_inference"),
         Arg("allocator") = make_resource<UnboundedAllocator>("pool_inference"));
 
+    // auto drop_alpha =
+    //     make_operator<ops::FormatConverterOp>("drop_alpha", from_config("drop_alpha"),
+    //     Arg("pool") = make_resource<UnboundedAllocator>("pool_drop_alpha"));
 
-      auto drop_alpha =
-        make_operator<ops::FormatConverterOp>("drop_alpha", from_config("drop_alpha"),
-        Arg("pool") = make_resource<UnboundedAllocator>("pool_drop_alpha"));
-
-      auto preprocessor =
+    auto preprocessor =
         make_operator<ops::FormatConverterOp>("preprocessor", from_config("inference_preprocessor"),
         Arg("pool") = make_resource<UnboundedAllocator>("pool_preprocessor"));
 
-     auto postprocessor =
+    auto postprocessor =
         make_operator<ops::FormatConverterOp>("postprocessor", from_config("inference_postprocessor"),
          Arg("pool") = make_resource<UnboundedAllocator>("pool_postprocessor"));
 
-
-    add_flow(replayer, drop_alpha);
-    add_flow(drop_alpha, preprocessor);
-    add_flow(preprocessor, inference);
+    add_flow(replayer, preprocessor);
+    // add_flow(drop_alpha, preprocessor);
+    add_flow(preprocessor, inference, {{"", "receivers"}});
     add_flow(inference, postprocessor);
     add_flow(postprocessor, visualizer, {{"tensor", "receivers"}});
+    // add_flow(replayer, visualizer, {{"", "receivers"}});
  
+    auto recorder_resize = make_operator<ops::FormatConverterOp>(
+        "recorder_resize",
+        from_config("recorder_resize"),
+        Arg("pool") = make_resource<UnboundedAllocator>("pool_recorder_resize"),
+        Arg("cuda_stream_pool") = cuda_stream_pool);
+
+    auto recorder = make_operator<ops::VideoStreamRecorderOp>(
+        "recorder",
+        from_config("recorder"));
+
+
+
+    // Connect postprocessor output to resize converter then recorder
+    add_flow(postprocessor, recorder_resize, {{"tensor", "source_video"}});
+    add_flow(recorder_resize, recorder);
   }
 };
 
