@@ -20,7 +20,9 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
+#include <array>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,10 +35,34 @@
 
 namespace holoscan::ops {
 
+// NTV2Channel string to enum mapping
+constexpr std::array<std::pair<std::string_view, NTV2Channel>, 8> NTV2ChannelMapping = {{
+    {"NTV2_CHANNEL1", NTV2Channel::NTV2_CHANNEL1},
+    {"NTV2_CHANNEL2", NTV2Channel::NTV2_CHANNEL2},
+    {"NTV2_CHANNEL3", NTV2Channel::NTV2_CHANNEL3},
+    {"NTV2_CHANNEL4", NTV2Channel::NTV2_CHANNEL4},
+    {"NTV2_CHANNEL5", NTV2Channel::NTV2_CHANNEL5},
+    {"NTV2_CHANNEL6", NTV2Channel::NTV2_CHANNEL6},
+    {"NTV2_CHANNEL7", NTV2Channel::NTV2_CHANNEL7},
+    {"NTV2_CHANNEL8", NTV2Channel::NTV2_CHANNEL8}
+}};
+
+// Convert string to NTV2Channel enum
+constexpr NTV2Channel ToNTV2Channel(std::string_view value) {
+  for (const auto& [name, channel] : NTV2ChannelMapping) {
+    if (name == value) {
+      return channel;
+    }
+  }
+  return NTV2Channel::NTV2_CHANNEL_INVALID;
+}
+
 // used in more than one function
 constexpr uint32_t kNumBuffers = 2;
 
-AJASourceOp::AJASourceOp() {}
+AJASourceOp::AJASourceOp() {
+  HOLOSCAN_LOG_INFO("AJASourceOp::AJASourceOp - Constructor called");
+}
 
 void AJASourceOp::setup(OperatorSpec& spec) {
   auto& video_buffer_output = spec.output<gxf::Entity>("video_buffer_output");
@@ -45,7 +71,7 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   auto& overlay_buffer_output = spec.output<gxf::Entity>("overlay_buffer_output");
 
   constexpr char kDefaultDevice[] = "0";
-  constexpr NTV2Channel kDefaultChannel = NTV2_CHANNEL1;
+  const std::vector<std::string> kDefaultChannel = {"NTV2_CHANNEL1"};
   constexpr uint32_t kDefaultWidth = 1920;
   constexpr uint32_t kDefaultHeight = 1080;
   constexpr uint32_t kDefaultFramerate = 60;
@@ -53,7 +79,7 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   constexpr bool kDefaultRDMA = false;
   constexpr bool kDefaultEnableOverlay = false;
   constexpr bool kDefaultOverlayRDMA = false;
-  constexpr NTV2Channel kDefaultOverlayChannel = NTV2_CHANNEL2;
+  const std::vector<std::string> kDefaultOverlayChannel = {"NTV2_CHANNEL3"};
 
   spec.param(video_buffer_output_,
              "video_buffer_output",
@@ -62,7 +88,10 @@ void AJASourceOp::setup(OperatorSpec& spec) {
              &video_buffer_output);
   spec.param(
       device_specifier_, "device", "Device", "Device specifier.", std::string(kDefaultDevice));
-  spec.param(channel_, "channel", "Channel", "NTV2Channel to use.", kDefaultChannel);
+  spec.param(channels_param_, "channels", "Channels", "NTV2Channels to use.", kDefaultChannel);
+  spec.param(
+      overlay_channels_param_,"overlay_channels", "OverlayChannels",
+      "NTV2Channels to use for overlay output.", kDefaultOverlayChannel);
   spec.param(width_, "width", "Width", "Width of the stream.", kDefaultWidth);
   spec.param(height_, "height", "Height", "Height of the stream.", kDefaultHeight);
   spec.param(framerate_, "framerate", "Framerate", "Framerate of the stream.", kDefaultFramerate);
@@ -70,11 +99,6 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   spec.param(use_rdma_, "rdma", "RDMA", "Enable RDMA.", kDefaultRDMA);
   spec.param(
       enable_overlay_, "enable_overlay", "EnableOverlay", "Enable overlay.", kDefaultEnableOverlay);
-  spec.param(overlay_channel_,
-             "overlay_channel",
-             "OverlayChannel",
-             "NTV2Channel to use for overlay output.",
-             kDefaultOverlayChannel);
   spec.param(
       overlay_rdma_, "overlay_rdma", "OverlayRDMA", "Enable overlay RDMA.", kDefaultOverlayRDMA);
   spec.param(overlay_buffer_output_,
@@ -206,16 +230,21 @@ AJAStatus AJASourceOp::OpenDevice() {
     HOLOSCAN_LOG_ERROR("AJA device cannot capture video.");
     return AJA_STATUS_UNSUPPORTED;
   }
-  if (!NTV2_IS_VALID_CHANNEL(channel_)) {
-    HOLOSCAN_LOG_ERROR("Invalid AJA channel: {}", static_cast<int>(channel_.get()));
-    return AJA_STATUS_UNSUPPORTED;
+  // Validate all channels
+  for (const auto& channel : channels_) {
+    if (!NTV2_IS_VALID_CHANNEL(channel)) {
+      HOLOSCAN_LOG_ERROR("Invalid AJA channel: {}", static_cast<int>(channel));
+      return AJA_STATUS_UNSUPPORTED;
+    }
   }
 
   // Check overlay capabilities.
   if (enable_overlay_) {
-    if (!NTV2_IS_VALID_CHANNEL(overlay_channel_)) {
-      HOLOSCAN_LOG_ERROR("Invalid overlay channel: {}", static_cast<int>(overlay_channel_.get()));
-      return AJA_STATUS_UNSUPPORTED;
+    for (const auto& overlay_channel : overlay_channels_) {
+      if (!NTV2_IS_VALID_CHANNEL(overlay_channel)) {
+        HOLOSCAN_LOG_ERROR("Invalid overlay channel: {}", static_cast<int>(overlay_channel));
+        return AJA_STATUS_UNSUPPORTED;
+      }
     }
 
     if (NTV2DeviceGetNumVideoChannels(device_id_) < 2) {
@@ -444,8 +473,20 @@ void AJASourceOp::initialize() {
   if (!enable_overlay_.get()) {
     spec()->outputs()["overlay_buffer_output"]->condition(ConditionType::kNone);
   }
-
   Operator::initialize();
+
+  // Initialize member variables from parameters - convert strings to enums
+  channels_.clear();
+  overlay_channels_.clear();
+  for (const auto& channel_str : channels_param_.get()) {
+    channels_.push_back(ToNTV2Channel(channel_str));
+  }
+  for (const auto& overlay_channel_str : overlay_channels_param_.get()) {
+    overlay_channels_.push_back(ToNTV2Channel(overlay_channel_str));
+  }
+  // Set the active channels (first in each list)
+  channel_ = channels_.front();
+  overlay_channel_ = overlay_channels_.front();
 }
 
 void AJASourceOp::start() {
@@ -471,11 +512,11 @@ void AJASourceOp::start() {
                     height_,
                     framerate,
                     (interlaced_ ? "(interlaced) " : ""),
-                    (channel_.get() + 1));
+                    (static_cast<int>(channel_) + 1));
   HOLOSCAN_LOG_INFO("AJA Source: RDMA is {}", use_rdma_ ? "enabled" : "disabled");
   if (enable_overlay_) {
     HOLOSCAN_LOG_INFO("AJA Source: Outputting overlay to NTV2_CHANNEL{}",
-                      (overlay_channel_.get() + 1));
+                      (static_cast<int>(overlay_channel_) + 1));
     HOLOSCAN_LOG_INFO("AJA Source: Overlay RDMA is {}", overlay_rdma_ ? "enabled" : "disabled");
   } else {
     HOLOSCAN_LOG_INFO("AJA Source: Overlay output is disabled");

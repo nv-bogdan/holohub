@@ -64,9 +64,9 @@ namespace holoscan::ops {
  * ==Parameters==
  *
  * - **device**: The device to target (e.g., "0" for device 0). Optional (default: "0").
- * - **channel**: The camera `NTV2Channel` to use for output (e.g., `NTV2Channel::NTV2_CHANNEL1`
- *   (`0`) or "NTV2_CHANNEL1" (in YAML) for the first channel). Optional (default:
- *   `NTV2Channel::NTV2_CHANNEL1` in C++ or `"NTV2_CHANNEL1"` in YAML).
+ * - **channels**: The camera `NTV2Channel` list to use for output. The first channel in the list will be used
+ *   as the active channel (e.g., `[NTV2Channel::NTV2_CHANNEL1]` or `["NTV2_CHANNEL1"]` in YAML).
+ *   Optional (default: `[NTV2Channel::NTV2_CHANNEL1]`).
  * - **width**: Width of the video stream. Optional (default: `1920`).
  * - **height**: Height of the video stream. Optional (default: `1080`).
  * - **framerate**: Frame rate of the video stream. Optional (default: `60`).
@@ -74,8 +74,9 @@ namespace holoscan::ops {
  * - **rdma**: Boolean indicating whether RDMA is enabled. Optional (default: `false`).
  * - **enable_overlay**: Boolean indicating whether a separate overlay channel is enabled. Optional
  *   (default: `false`).
- * - **overlay_channel**: The camera `NTV2Channel` to use for overlay output. Optional (default:
- *   `NTV2Channel::NTV2_CHANNEL2` in C++ or `"NTV2_CHANNEL2"` in YAML).
+ * - **overlay_channels**: The camera `NTV2Channel` list to use for overlay output. The first channel in the list
+ *   will be used as the active overlay channel (e.g., `[NTV2Channel::NTV2_CHANNEL3]` or `["NTV2_CHANNEL3"]` in YAML).
+ *   Optional (default: `[NTV2Channel::NTV2_CHANNEL3]`).
  * - **overlay_rdma**: Boolean indicating whether RDMA is enabled for the overlay. Optional
  *   (default: `true`).
  */
@@ -106,25 +107,31 @@ class AJASourceOp : public holoscan::Operator {
 
   Parameter<holoscan::IOSpec*> video_buffer_output_;
   Parameter<std::string> device_specifier_;
-  Parameter<NTV2Channel> channel_;
+  Parameter<std::vector<std::string>> channels_param_;
   Parameter<uint32_t> width_;
   Parameter<uint32_t> height_;
   Parameter<uint32_t> framerate_;
   Parameter<bool> interlaced_;
   Parameter<bool> use_rdma_;
   Parameter<bool> enable_overlay_;
-  Parameter<NTV2Channel> overlay_channel_;
+  Parameter<std::vector<std::string>> overlay_channels_param_;
   Parameter<bool> overlay_rdma_;
   Parameter<holoscan::IOSpec*> overlay_buffer_input_;
   Parameter<holoscan::IOSpec*> overlay_buffer_output_;
 
   // internal state
+  std::vector<NTV2Channel> channels_;
+  std::vector<NTV2Channel> overlay_channels_;
   CNTV2Card device_;
   NTV2DeviceID device_id_ = DEVICE_ID_NOTFOUND;
   NTV2VideoFormat video_format_ = NTV2_FORMAT_UNKNOWN;
   NTV2PixelFormat pixel_format_ = NTV2_FBF_ABGR;
   bool use_tsi_ = false;
   bool is_kona_hdmi_ = false;
+  
+  // Current active channels (derived from parameters)
+  NTV2Channel channel_;
+  NTV2Channel overlay_channel_;
 
   std::vector<void*> buffers_;
   std::vector<void*> overlay_buffers_;
