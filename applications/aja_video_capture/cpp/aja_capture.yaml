@@ -15,6 +15,8 @@
 # limitations under the License.
 ---
 aja:
+  channels: [NTV2_CHANNEL2, NTV2_CHANNEL4]  # Multi-channel setup
+  overlay_channels: [NTV2_CHANNEL1, NTV2_CHANNEL3]  # Multi-overlay setup
   width: 1920
   height: 1080
   framerate: 60
@@ -26,6 +28,19 @@ aja:
 holoviz:
   width: 854
   height: 480
+  # headless: true
+  # enable_render_buffer_output: true
+  tensors:
+    - name: ""
+      type: color
+      opacity: 1.0
+      priority: 0
+
+holoviz2:
+  width: 854
+  height: 480
+  # headless: true
+  # enable_render_buffer_output: true
   tensors:
     - name: ""
       type: color
