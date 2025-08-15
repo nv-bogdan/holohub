@@ -54,12 +54,24 @@ namespace holoscan::ops {
  * ==Named Outputs==
  *
  * - **video_buffer_output** : `nvidia::gxf::VideoBuffer`
- *   - The output video frame from the AJA capture card. If `overlay_rdma` is true, this
+ *   - The output video frame from the first AJA capture channel. If `rdma` is true, this
  *     video buffer will be on the device, otherwise it will be in pinned host memory.
+ * - **video_buffer_output_2** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - The output video frame from the second AJA capture channel. Only emitted when multiple channels are configured.
+ * - **video_buffer_output_3** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - The output video frame from the third AJA capture channel. Only emitted when multiple channels are configured.
+ * - **video_buffer_output_4** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - The output video frame from the fourth AJA capture channel. Only emitted when multiple channels are configured.
  * - **overlay_buffer_output** : `nvidia::gxf::VideoBuffer` (optional)
  *   - This output port will only emit a video buffer when `enable_overlay` is true. If
  *     `overlay_rdma` is true, this video buffer will be on the device, otherwise it will be
  *     in pinned host memory.
+ * - **overlay_buffer_output_2** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - The output overlay frame from the second overlay channel. Only emitted when multiple overlay channels are configured.
+ * - **overlay_buffer_output_3** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - The output overlay frame from the third overlay channel. Only emitted when multiple overlay channels are configured.
+ * - **overlay_buffer_output_4** : `nvidia::gxf::VideoBuffer` (optional)
+ *   - The output overlay frame from the fourth overlay channel. Only emitted when multiple overlay channels are configured.
  *
  * ==Parameters==
  *
@@ -105,7 +117,16 @@ class AJASourceOp : public holoscan::Operator {
   void FreeBuffers(std::vector<void*>& buffers, bool rdma);
   bool GetNTV2VideoFormatTSI(NTV2VideoFormat* format);
 
+
+
   Parameter<holoscan::IOSpec*> video_buffer_output_;
+  Parameter<holoscan::IOSpec*> video_buffer_output_2_;
+  Parameter<holoscan::IOSpec*> video_buffer_output_3_;
+  Parameter<holoscan::IOSpec*> video_buffer_output_4_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_2_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_3_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_4_;
   Parameter<std::string> device_specifier_;
   Parameter<std::vector<std::string>> channels_param_;
   Parameter<uint32_t> width_;
@@ -117,7 +138,6 @@ class AJASourceOp : public holoscan::Operator {
   Parameter<std::vector<std::string>> overlay_channels_param_;
   Parameter<bool> overlay_rdma_;
   Parameter<holoscan::IOSpec*> overlay_buffer_input_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_output_;
 
   // internal state
   std::vector<NTV2Channel> channels_;
@@ -133,11 +153,36 @@ class AJASourceOp : public holoscan::Operator {
   NTV2Channel channel_;
   NTV2Channel overlay_channel_;
 
-  std::vector<void*> buffers_;
-  std::vector<void*> overlay_buffers_;
+  // Buffer management for multiple channels
+  std::vector<std::vector<void*>> channel_buffers_;        // buffers_[buffer_index][frame_index]
+  std::vector<std::vector<void*>> overlay_channel_buffers_; // overlay_buffers_[buffer_index][frame_index]
+  
+  // Mapping from channel enum to buffer index
+  std::map<NTV2Channel, size_t> channel_to_buffer_map_;
+  std::map<NTV2Channel, size_t> overlay_channel_to_buffer_map_;
+  
+  // Output name arrays for easy indexing
+  static constexpr const char* video_output_names_[] = {
+    "video_buffer_output",
+    "video_buffer_output_2", 
+    "video_buffer_output_3",
+    "video_buffer_output_4"
+  };
+  
+  static constexpr const char* overlay_output_names_[] = {
+    "overlay_buffer_output",
+    "overlay_buffer_output_2",
+    "overlay_buffer_output_3", 
+    "overlay_buffer_output_4"
+  };
+  
   uint8_t current_buffer_ = 0;
   uint8_t current_hw_frame_ = 0;
   uint8_t current_overlay_hw_frame_ = 0;
+
+  // Track which outputs are disabled
+  std::vector<bool> video_outputs_disabled_ = {false, false, false, false};
+  std::vector<bool> overlay_outputs_disabled_ = {false, false, false, false};
 
   bool is_igpu_ = false;
 };
