@@ -58,20 +58,12 @@ namespace holoscan::ops {
  *     video buffer will be on the device, otherwise it will be in pinned host memory.
  * - **video_buffer_output_2** : `nvidia::gxf::VideoBuffer` (optional)
  *   - The output video frame from the second AJA capture channel. Only emitted when multiple channels are configured.
- * - **video_buffer_output_3** : `nvidia::gxf::VideoBuffer` (optional)
- *   - The output video frame from the third AJA capture channel. Only emitted when multiple channels are configured.
- * - **video_buffer_output_4** : `nvidia::gxf::VideoBuffer` (optional)
- *   - The output video frame from the fourth AJA capture channel. Only emitted when multiple channels are configured.
  * - **overlay_buffer_output** : `nvidia::gxf::VideoBuffer` (optional)
  *   - This output port will only emit a video buffer when `enable_overlay` is true. If
  *     `overlay_rdma` is true, this video buffer will be on the device, otherwise it will be
  *     in pinned host memory.
  * - **overlay_buffer_output_2** : `nvidia::gxf::VideoBuffer` (optional)
  *   - The output overlay frame from the second overlay channel. Only emitted when multiple overlay channels are configured.
- * - **overlay_buffer_output_3** : `nvidia::gxf::VideoBuffer` (optional)
- *   - The output overlay frame from the third overlay channel. Only emitted when multiple overlay channels are configured.
- * - **overlay_buffer_output_4** : `nvidia::gxf::VideoBuffer` (optional)
- *   - The output overlay frame from the fourth overlay channel. Only emitted when multiple overlay channels are configured.
  *
  * ==Parameters==
  *
@@ -121,12 +113,8 @@ class AJASourceOp : public holoscan::Operator {
 
   Parameter<holoscan::IOSpec*> video_buffer_output_;
   Parameter<holoscan::IOSpec*> video_buffer_output_2_;
-  Parameter<holoscan::IOSpec*> video_buffer_output_3_;
-  Parameter<holoscan::IOSpec*> video_buffer_output_4_;
   Parameter<holoscan::IOSpec*> overlay_buffer_output_;
   Parameter<holoscan::IOSpec*> overlay_buffer_output_2_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_output_3_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_output_4_;
   Parameter<std::string> device_specifier_;
   Parameter<std::vector<std::string>> channels_param_;
   Parameter<uint32_t> width_;
@@ -137,11 +125,9 @@ class AJASourceOp : public holoscan::Operator {
   Parameter<bool> enable_overlay_;
   Parameter<std::vector<std::string>> overlay_channels_param_;
   Parameter<bool> overlay_rdma_;
-  // Individual overlay input ports (up to 4)
+  // Individual overlay input ports (up to 2)
   Parameter<holoscan::IOSpec*> overlay_buffer_input_;
   Parameter<holoscan::IOSpec*> overlay_buffer_input_2_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_input_3_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_input_4_;
 
   // internal state
   std::vector<NTV2Channel> channels_;
@@ -168,32 +154,23 @@ class AJASourceOp : public holoscan::Operator {
   // Output name arrays for easy indexing
   static constexpr const char* video_output_names_[] = {
     "video_buffer_output",
-    "video_buffer_output_2", 
-    "video_buffer_output_3",
-    "video_buffer_output_4"
+    "video_buffer_output_2"
   };
   
     static constexpr const char* overlay_output_names_[] = {
     "overlay_buffer_output",
-    "overlay_buffer_output_2",
-    "overlay_buffer_output_3",
-    "overlay_buffer_output_4"
+    "overlay_buffer_output_2"
   };
 
   static constexpr const char* overlay_input_names_[] = {
     "overlay_buffer_input",
-    "overlay_buffer_input_2",
-    "overlay_buffer_input_3",
-    "overlay_buffer_input_4"
+    "overlay_buffer_input_2"
   };
   
-  uint8_t current_buffer_ = 0;
-  uint8_t current_hw_frame_ = 0;
   uint8_t current_overlay_hw_frame_ = 0;
 
-  // Track which outputs are disabled
-  std::vector<bool> video_outputs_disabled_ = {false, false, false, false};
-  std::vector<bool> overlay_outputs_disabled_ = {false, false, false, false};
+  // Track which buffer each channel should use for double buffering
+  std::vector<uint8_t> current_channel_buffers_;
 
   bool is_igpu_ = false;
 };
