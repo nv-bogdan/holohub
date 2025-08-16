@@ -137,7 +137,11 @@ class AJASourceOp : public holoscan::Operator {
   Parameter<bool> enable_overlay_;
   Parameter<std::vector<std::string>> overlay_channels_param_;
   Parameter<bool> overlay_rdma_;
+  // Individual overlay input ports (up to 4)
   Parameter<holoscan::IOSpec*> overlay_buffer_input_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_input_2_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_input_3_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_input_4_;
 
   // internal state
   std::vector<NTV2Channel> channels_;
@@ -169,11 +173,18 @@ class AJASourceOp : public holoscan::Operator {
     "video_buffer_output_4"
   };
   
-  static constexpr const char* overlay_output_names_[] = {
+    static constexpr const char* overlay_output_names_[] = {
     "overlay_buffer_output",
     "overlay_buffer_output_2",
-    "overlay_buffer_output_3", 
+    "overlay_buffer_output_3",
     "overlay_buffer_output_4"
+  };
+
+  static constexpr const char* overlay_input_names_[] = {
+    "overlay_buffer_input",
+    "overlay_buffer_input_2",
+    "overlay_buffer_input_3",
+    "overlay_buffer_input_4"
   };
   
   uint8_t current_buffer_ = 0;
