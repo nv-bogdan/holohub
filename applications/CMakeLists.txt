@@ -49,7 +49,11 @@ add_holohub_application(endoscopy_tool_tracking DEPENDS
                                   tool_tracking_postprocessor
                                   slang_shader
                                   OPTIONAL deltacast_videomaster yuan_qcap vtk_renderer aja_source)
-
+add_holohub_application(endoscopy_tool_tracking_aja_multi_ch DEPENDS
+                        OPERATORS lstm_tensor_rt_inference
+                                  tool_tracking_postprocessor
+                                  slang_shader
+                                  aja_source_multi_ch)
 add_subdirectory(h264)
 
 add_holohub_application(isaac_holoscan_bridge)
