@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         cmake \
         make \
+        xvfb \
+        ninja-build \
         patch \
         ffmpeg \
         libnpp-12-9 \
@@ -68,5 +70,5 @@ RUN if ! python3 -m pip --version >/dev/null 2>&1; then \
     ; fi
 
 RUN pip3 install holoscan cupy-cuda12x \
-    && chmod -R a+w /usr/local/lib/python3.12/dist-packages/holoscan-3.4.0.dist-info/ \
+    && chmod -R a+w /usr/local/lib/python3.12/dist-packages/holoscan-*.dist-info/ \
     && chmod -R a+rw /usr/local/lib/python3.12/dist-packages/holoscan

@@ -47,6 +47,7 @@ add_holohub_application(endoscopy_out_of_body_detection DEPENDS OPERATORS aja_so
 add_holohub_application(endoscopy_tool_tracking DEPENDS
                         OPERATORS lstm_tensor_rt_inference
                                   tool_tracking_postprocessor
+                                  slang_shader
                                   OPTIONAL deltacast_videomaster yuan_qcap vtk_renderer aja_source)
 
 add_subdirectory(h264)
@@ -67,6 +68,8 @@ add_subdirectory(laser_detection_latency)
 add_holohub_application(monai_endoscopic_tool_seg DEPENDS OPERATORS aja_source)
 add_holohub_application(multiai_endoscopy DEPENDS OPERATORS aja_source)
 add_holohub_application(multiai_ultrasound DEPENDS OPERATORS aja_source)
+
+add_subdirectory(nvidia_video_codec)
 
 add_holohub_application(simple_radar_pipeline)
 add_holohub_application(simple_pdw_pipeline DEPENDS
@@ -128,6 +131,8 @@ add_holohub_application(yolo_model_deployment)
 add_holohub_application(vila_live)
 add_holohub_application(holochat)
 add_holohub_application(xr_holoviz DEPENDS OPERATORS xr)
+add_holohub_application(xr_gsplat DEPENDS OPERATORS xr)
 add_subdirectory(orsi)
 add_subdirectory(nvidia_nim)
 add_subdirectory(ehr_query_llm)
+add_subdirectory(slang)
