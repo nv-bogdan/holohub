@@ -171,6 +171,8 @@ class AJASourceOp : public holoscan::Operator {
 
   // Track which buffer each channel should use for double buffering
   std::vector<uint8_t> current_channel_buffers_;
+  
+
 
   bool is_igpu_ = false;
 };

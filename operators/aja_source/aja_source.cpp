@@ -364,23 +364,36 @@ AJAStatus AJASourceOp::SetupVideo() {
         HOLOSCAN_LOG_ERROR("No CSC available for NTV2_CHANNEL{}", static_cast<int>(channel) + 1);
         return AJA_STATUS_UNSUPPORTED;
       }
+      
+      // Use the default channel-based routing (like the original working code)
+      // This lets the hardware handle the routing naturally
       NTV2InputXptID csc_input = GetCSCInputXptFromChannel(channel);
-      NTV2OutputXptID csc_output =
-          GetCSCOutputXptFromChannel(channel, /*inIsKey*/ false, /*inIsRGB*/ true);
+      NTV2OutputXptID csc_output = GetCSCOutputXptFromChannel(channel, false, true);
       device_.Connect(fb_input_xpt, csc_output);
       device_.Connect(csc_input, input_output_xpt);
+      
+      HOLOSCAN_LOG_INFO("  Input routing: NTV2_CHANNEL{} -> CSC -> Frame Buffer (using default routing)", static_cast<int>(channel));
     } else {
       device_.Connect(fb_input_xpt, input_output_xpt);
     }
   }
 
   // Set each channel to its own dedicated hardware frame for independent capture
+  
+  // Set each channel to its own dedicated hardware frame for independent capture
   for (size_t i = 0; i < channels_.size(); ++i) {
     const auto& channel = channels_[i];
-    // Each channel gets its own dedicated hardware frame
     uint32_t hw_frame = i;  // 0 for first, 1 for second
     device_.SetInputFrame(channel, hw_frame);
-    HOLOSCAN_LOG_INFO("Set channel {} to dedicated hardware frame {}", static_cast<int>(channel), hw_frame);
+    
+    // Ensure consistent video format across all channels
+    device_.SetVideoFormat(video_format_, false, false, channel);
+    device_.SetFrameBufferFormat(channel, pixel_format_);
+    
+    HOLOSCAN_LOG_INFO("Channel {}: NTV2_CHANNEL{} -> Frame Buffer {} (hardware frame {})", 
+                      i + 1, static_cast<int>(channel), hw_frame, hw_frame);
+    HOLOSCAN_LOG_INFO("  Hardware frame {} will receive data from NTV2_CHANNEL{}", hw_frame, static_cast<int>(channel));
+    HOLOSCAN_LOG_INFO("  Note: Frame Buffer {} input is hardwired to NTV2_CHANNEL{}", hw_frame, static_cast<int>(channel));
   }
 
   // Setup overlay channels with one-to-one mapping to input channels
@@ -399,29 +412,57 @@ AJAStatus AJASourceOp::SetupVideo() {
       
       HOLOSCAN_LOG_INFO("Setting up overlay: input channel {} -> overlay channel {}", 
                         static_cast<int>(input_channel), static_cast<int>(overlay_channel));
+      HOLOSCAN_LOG_INFO("  Channel {}: Input NTV2_CHANNEL{} -> Frame Buffer {} -> video_buffer_output{}", 
+                        i + 1, static_cast<int>(input_channel), i, (i == 0) ? "" : "_2");
+      HOLOSCAN_LOG_INFO("  Overlay {}: NTV2_CHANNEL{} -> Frame Buffer {} -> CSC -> Mixer{} -> SDI Output", 
+                        i + 1, static_cast<int>(overlay_channel), i + 2, i + 1);
       
       // Setup output channel.
       device_.SetReference(NTV2_REFERENCE_INPUT1);
       device_.SetMode(overlay_channel, NTV2_MODE_DISPLAY);
       device_.SetSDITransmitEnable(overlay_channel, true);
       device_.SetVideoFormat(video_format_, false, false, overlay_channel);
-      device_.SetFrameBufferFormat(overlay_channel, NTV2_FBF_ABGR);
+      device_.SetFrameBufferFormat(overlay_channel, pixel_format_);  // Use same format as input
 
-      // Setup mixer controls.
-      device_.SetMixerFGInputControl(0, NTV2MIXERINPUTCONTROL_SHAPED);
-      device_.SetMixerBGInputControl(0, NTV2MIXERINPUTCONTROL_FULLRASTER);
-      device_.SetMixerCoefficient(0, 0x10000);
-      device_.SetMixerFGMatteEnabled(0, false);
-      device_.SetMixerBGMatteEnabled(0, false);
+      // Setup mixer controls - use different mixer for each channel
+      int mixer_index = i;  // Mixer 0 for first channel, Mixer 1 for second channel
+      device_.SetMixerFGInputControl(mixer_index, NTV2MIXERINPUTCONTROL_SHAPED);
+      device_.SetMixerBGInputControl(mixer_index, NTV2MIXERINPUTCONTROL_FULLRASTER);
+      device_.SetMixerCoefficient(mixer_index, 0x10000);
+      device_.SetMixerFGMatteEnabled(mixer_index, false);
+      device_.SetMixerBGMatteEnabled(mixer_index, false);
+      
+      // Set mixer reference based on VSync signal availability
+      device_.SetReference(NTV2_REFERENCE_INPUT2);
+      
+      device_.SetMixerReference(mixer_index, ref_source);
 
       // Setup routing (overlay frame to CSC, CSC and SDI input to mixer, mixer to SDI output).
       NTV2OutputDestination output_dst = ::NTV2ChannelToOutputDestination(overlay_channel);
+      
+      // Use the default channel-based routing (like the original working code)
+      // Connect overlay frame to CSC (let hardware handle the routing)
       device_.Connect(GetCSCInputXptFromChannel(overlay_channel),
                       GetFrameBufferOutputXptFromChannel(overlay_channel, true /*RGB*/));
-      device_.Connect(NTV2_XptMixer1FGVidInput,
-                      GetCSCOutputXptFromChannel(overlay_channel, false /*Key*/));
-      device_.Connect(NTV2_XptMixer1FGKeyInput,
-                      GetCSCOutputXptFromChannel(overlay_channel, true /*Key*/));
+      
+      // Connect CSC to mixer foreground - use different mixer for each channel
+      if (i == 0) {
+        // First channel: overlay goes to Mixer1 foreground
+        device_.Connect(NTV2_XptMixer1FGVidInput,
+                        GetCSCOutputXptFromChannel(overlay_channel, false /*inIsKey*/, true /*inIsRGB*/));
+        device_.Connect(NTV2_XptMixer1FGKeyInput,
+                        GetCSCOutputXptFromChannel(overlay_channel, true /*inIsKey*/, true /*inIsRGB*/));
+        
+        HOLOSCAN_LOG_INFO("  Overlay routing: Frame Buffer {} → CSC → Mixer1", i + 2);
+      } else {
+        // Second channel: overlay goes to Mixer2 foreground
+        device_.Connect(NTV2_XptMixer2FGVidInput,
+                        GetCSCOutputXptFromChannel(overlay_channel, false /*inIsKey*/, true /*inIsRGB*/));
+        device_.Connect(NTV2_XptMixer2FGKeyInput,
+                        GetCSCOutputXptFromChannel(overlay_channel, true /*inIsKey*/, true /*inIsRGB*/));
+        
+        HOLOSCAN_LOG_INFO("  Overlay routing: Frame Buffer {} → CSC → Mixer2", i + 2);
+      }
       
       // Connect the mixer background to the corresponding input channel
       NTV2InputSourceKinds input_kind = is_kona_hdmi_ ? NTV2_INPUTSOURCES_HDMI : NTV2_INPUTSOURCES_SDI;
@@ -433,15 +474,41 @@ AJAStatus AJASourceOp::SetupVideo() {
         is_input_rgb = (input_color == NTV2_LHIHDMIColorSpaceRGB);
       }
       NTV2OutputXptID input_output_xpt = GetInputSourceOutputXpt(input_src, false, is_input_rgb, 0);
-      device_.Connect(NTV2_XptMixer1BGVidInput, input_output_xpt);
       
-      device_.Connect(GetOutputDestInputXpt(output_dst), NTV2_XptMixer1VidYUV);
+      // Connect background to the same mixer as foreground for each channel
+      if (i == 0) {
+        // First channel: background goes to Mixer1
+        device_.Connect(NTV2_XptMixer1BGVidInput, input_output_xpt);
+      } else {
+        // Second channel: background goes to Mixer2
+        device_.Connect(NTV2_XptMixer2BGVidInput, input_output_xpt);
+      }
+      
+      // Connect mixer output to SDI output - each channel uses its own mixer
+      if (i == 0) {
+        // First channel: output from Mixer1
+        device_.Connect(GetOutputDestInputXpt(output_dst), NTV2_XptMixer1VidYUV);
+      } else {
+        // Second channel: output from Mixer2
+        device_.Connect(GetOutputDestInputXpt(output_dst), NTV2_XptMixer2VidYUV);
+      }
 
       // Set initial output frame (overlay uses HW frames 2 and 3).
       uint32_t hw_overlay_frame = i + 2;  // 2 for first overlay, 3 for second overlay
       device_.SetOutputFrame(overlay_channel, hw_overlay_frame);
       HOLOSCAN_LOG_INFO("Set overlay channel {} to hardware frame {}", static_cast<int>(overlay_channel), hw_overlay_frame);
     }
+    
+    // Log the complete routing summary
+    HOLOSCAN_LOG_INFO("=== COMPLETE ROUTING SUMMARY ===");
+    HOLOSCAN_LOG_INFO("Channel 1: NTV2_CHANNEL{} (Frame Buffer 0 → CSC) + NTV2_CHANNEL{} (Frame Buffer 2 → CSC → Mixer1) -> SDI Output", 
+                      static_cast<int>(channels_[0]), static_cast<int>(overlay_channels_[0]));
+    if (channels_.size() > 1) {
+      HOLOSCAN_LOG_INFO("Channel 2: NTV2_CHANNEL{} (Frame Buffer 1 → CSC) + NTV2_CHANNEL{} (Frame Buffer 3 → CSC → Mixer2) -> SDI Output", 
+                        static_cast<int>(channels_[1]), static_cast<int>(overlay_channels_[1]));
+    }
+    HOLOSCAN_LOG_INFO("Note: Channel 1 uses Mixer1, Channel 2 uses Mixer2");
+    HOLOSCAN_LOG_INFO("=================================");
   }
 
   // Wait for vertical interrupt on first channel
@@ -560,9 +627,9 @@ void AJASourceOp::initialize() {
   if (!enable_overlay_.has_value()) { enable_overlay_.set_default_value(); }
   
   // DEBUG ONLY: Disable second outputs to focus on first channel
-  spec()->outputs()["video_buffer_output_2"]->condition(ConditionType::kNone);
+  // spec()->outputs()["video_buffer_output_2"]->condition(ConditionType::kNone);
   // spec()->outputs()["overlay_buffer_output"]->condition(ConditionType::kNone);
-  spec()->outputs()["overlay_buffer_output_2"]->condition(ConditionType::kNone);
+  // spec()->outputs()["overlay_buffer_output_2"]->condition(ConditionType::kNone);
   HOLOSCAN_LOG_INFO("DEBUG: Disabled video_buffer_output_2 and overlay_buffer_output_2 for single channel testing");
   
   Operator::initialize();
@@ -575,6 +642,8 @@ void AJASourceOp::initialize() {
   for (const auto& overlay_channel_str : overlay_channels_param_.get()) {
     overlay_channels_.push_back(ToNTV2Channel(overlay_channel_str));
   }
+  
+
   
   // Set the active channels (first in each list)
   channel_ = channels_.front();
@@ -684,7 +753,14 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
           HOLOSCAN_LOG_INFO("Applied overlay to channel {} using hardware frame {}", i + 1, hw_overlay_frame);
         }
       }
-      device_.SetMixerMode(0, NTV2MIXERMODE_MIX);
+  
+  // Set mixer modes for both channels
+  if (enable_overlay_) {
+    device_.SetMixerMode(0, NTV2MIXERMODE_MIX);  // First channel uses Mixer1
+    if (num_overlay_channels > 1) {
+      device_.SetMixerMode(1, NTV2MIXERMODE_MIX);  // Second channel uses Mixer2
+    }
+  }
     }
   }
 
@@ -824,7 +900,12 @@ void AJASourceOp::stop() {
   
   device_.DMABufferUnlockAll();
 
-  if (enable_overlay_) { device_.SetMixerMode(0, NTV2MIXERMODE_FOREGROUND_OFF); }
+  if (enable_overlay_) { 
+    device_.SetMixerMode(0, NTV2MIXERMODE_FOREGROUND_OFF);  // Disable Mixer1
+    if (overlay_channels_.size() > 1) {
+      device_.SetMixerMode(1, NTV2MIXERMODE_FOREGROUND_OFF);  // Disable Mixer2
+    }
+  }
 
   // Free buffers for all channels
   for (auto& channel_buffers : channel_buffers_) {
