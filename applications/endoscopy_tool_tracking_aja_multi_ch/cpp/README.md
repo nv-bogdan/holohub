@@ -13,14 +13,6 @@ This app is modified to use multippel video streams and it only works with AJA c
 Follow the [setup instructions from the user guide](https://docs.nvidia.com/holoscan/sdk-user-guide/aja_setup.html) to use the AJA capture card.
 
 
-
-### Build Instructions
-
-```
-./holohub build --language cpp endoscopy_tool_tracking_aja_multi_ch
-
-```
-
 ### Run Instructions
 
 ```

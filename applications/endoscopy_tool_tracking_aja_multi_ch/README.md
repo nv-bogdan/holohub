@@ -2,10 +2,9 @@
 
 This application demonstrates real-time AI-powered tool detection and tracking in endoscopic video streams.
 
-
-
 ##Known Issues
-THis app is 
+ - Only the C++ version of the app is currently working 
+ - It requires an AJA Capture card with hardware keying
 
 ## Overview
 
