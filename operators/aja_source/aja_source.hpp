@@ -54,23 +54,19 @@ namespace holoscan::ops {
  * ==Named Outputs==
  *
  * - **video_buffer_output** : `nvidia::gxf::VideoBuffer`
- *   - The output video frame from the first AJA capture channel. If `rdma` is true, this
+ *   - The output video frame from the AJA capture card. If `overlay_rdma` is true, this
  *     video buffer will be on the device, otherwise it will be in pinned host memory.
- * - **video_buffer_output_2** : `nvidia::gxf::VideoBuffer` (optional)
- *   - The output video frame from the second AJA capture channel. Only emitted when multiple channels are configured.
  * - **overlay_buffer_output** : `nvidia::gxf::VideoBuffer` (optional)
  *   - This output port will only emit a video buffer when `enable_overlay` is true. If
  *     `overlay_rdma` is true, this video buffer will be on the device, otherwise it will be
  *     in pinned host memory.
- * - **overlay_buffer_output_2** : `nvidia::gxf::VideoBuffer` (optional)
- *   - The output overlay frame from the second overlay channel. Only emitted when multiple overlay channels are configured.
  *
  * ==Parameters==
  *
  * - **device**: The device to target (e.g., "0" for device 0). Optional (default: "0").
- * - **channels**: The camera `NTV2Channel` list to use for output. The first channel in the list will be used
- *   as the active channel (e.g., `[NTV2Channel::NTV2_CHANNEL1]` or `["NTV2_CHANNEL1"]` in YAML).
- *   Optional (default: `[NTV2Channel::NTV2_CHANNEL1]`).
+ * - **channel**: The camera `NTV2Channel` to use for output (e.g., `NTV2Channel::NTV2_CHANNEL1`
+ *   (`0`) or "NTV2_CHANNEL1" (in YAML) for the first channel). Optional (default:
+ *   `NTV2Channel::NTV2_CHANNEL1` in C++ or `"NTV2_CHANNEL1"` in YAML).
  * - **width**: Width of the video stream. Optional (default: `1920`).
  * - **height**: Height of the video stream. Optional (default: `1080`).
  * - **framerate**: Frame rate of the video stream. Optional (default: `60`).
@@ -78,9 +74,8 @@ namespace holoscan::ops {
  * - **rdma**: Boolean indicating whether RDMA is enabled. Optional (default: `false`).
  * - **enable_overlay**: Boolean indicating whether a separate overlay channel is enabled. Optional
  *   (default: `false`).
- * - **overlay_channels**: The camera `NTV2Channel` list to use for overlay output. The first channel in the list
- *   will be used as the active overlay channel (e.g., `[NTV2Channel::NTV2_CHANNEL3]` or `["NTV2_CHANNEL3"]` in YAML).
- *   Optional (default: `[NTV2Channel::NTV2_CHANNEL3]`).
+ * - **overlay_channel**: The camera `NTV2Channel` to use for overlay output. Optional (default:
+ *   `NTV2Channel::NTV2_CHANNEL2` in C++ or `"NTV2_CHANNEL2"` in YAML).
  * - **overlay_rdma**: Boolean indicating whether RDMA is enabled for the overlay. Optional
  *   (default: `true`).
  */
@@ -109,70 +104,33 @@ class AJASourceOp : public holoscan::Operator {
   void FreeBuffers(std::vector<void*>& buffers, bool rdma);
   bool GetNTV2VideoFormatTSI(NTV2VideoFormat* format);
 
-
-
   Parameter<holoscan::IOSpec*> video_buffer_output_;
-  Parameter<holoscan::IOSpec*> video_buffer_output_2_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_output_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_output_2_;
   Parameter<std::string> device_specifier_;
-  Parameter<std::vector<std::string>> channels_param_;
+  Parameter<NTV2Channel> channel_;
   Parameter<uint32_t> width_;
   Parameter<uint32_t> height_;
   Parameter<uint32_t> framerate_;
   Parameter<bool> interlaced_;
   Parameter<bool> use_rdma_;
   Parameter<bool> enable_overlay_;
-  Parameter<std::vector<std::string>> overlay_channels_param_;
+  Parameter<NTV2Channel> overlay_channel_;
   Parameter<bool> overlay_rdma_;
-  // Individual overlay input ports (up to 2)
   Parameter<holoscan::IOSpec*> overlay_buffer_input_;
-  Parameter<holoscan::IOSpec*> overlay_buffer_input_2_;
+  Parameter<holoscan::IOSpec*> overlay_buffer_output_;
 
   // internal state
-  std::vector<NTV2Channel> channels_;
-  std::vector<NTV2Channel> overlay_channels_;
   CNTV2Card device_;
   NTV2DeviceID device_id_ = DEVICE_ID_NOTFOUND;
   NTV2VideoFormat video_format_ = NTV2_FORMAT_UNKNOWN;
   NTV2PixelFormat pixel_format_ = NTV2_FBF_ABGR;
   bool use_tsi_ = false;
   bool is_kona_hdmi_ = false;
-  
-  // Current active channels (derived from parameters)
-  NTV2Channel channel_;
-  NTV2Channel overlay_channel_;
 
-  // Buffer management for multiple channels
-  std::vector<std::vector<void*>> channel_buffers_;        // buffers_[buffer_index][frame_index]
-  std::vector<std::vector<void*>> overlay_channel_buffers_; // overlay_buffers_[buffer_index][frame_index]
-  
-  // Mapping from channel enum to buffer index
-  std::map<NTV2Channel, size_t> channel_to_buffer_map_;
-  std::map<NTV2Channel, size_t> overlay_channel_to_buffer_map_;
-  
-  // Output name arrays for easy indexing
-  static constexpr const char* video_output_names_[] = {
-    "video_buffer_output",
-    "video_buffer_output_2"
-  };
-  
-    static constexpr const char* overlay_output_names_[] = {
-    "overlay_buffer_output",
-    "overlay_buffer_output_2"
-  };
-
-  static constexpr const char* overlay_input_names_[] = {
-    "overlay_buffer_input",
-    "overlay_buffer_input_2"
-  };
-  
+  std::vector<void*> buffers_;
+  std::vector<void*> overlay_buffers_;
+  uint8_t current_buffer_ = 0;
+  uint8_t current_hw_frame_ = 0;
   uint8_t current_overlay_hw_frame_ = 0;
-
-  // Track which buffer each channel should use for double buffering
-  std::vector<uint8_t> current_channel_buffers_;
-  
-
 
   bool is_igpu_ = false;
 };

@@ -20,9 +20,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#include <array>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,49 +31,21 @@
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
 
-#include <fmt/format.h>
-
 namespace holoscan::ops {
 
-// NTV2Channel string to enum mapping
-constexpr std::array<std::pair<std::string_view, NTV2Channel>, 8> NTV2ChannelMapping = {{
-    {"NTV2_CHANNEL1", NTV2Channel::NTV2_CHANNEL1},
-    {"NTV2_CHANNEL2", NTV2Channel::NTV2_CHANNEL2},
-    {"NTV2_CHANNEL3", NTV2Channel::NTV2_CHANNEL3},
-    {"NTV2_CHANNEL4", NTV2Channel::NTV2_CHANNEL4},
-    {"NTV2_CHANNEL5", NTV2Channel::NTV2_CHANNEL5},
-    {"NTV2_CHANNEL6", NTV2Channel::NTV2_CHANNEL6},
-    {"NTV2_CHANNEL7", NTV2Channel::NTV2_CHANNEL7},
-    {"NTV2_CHANNEL8", NTV2Channel::NTV2_CHANNEL8}
-}};
-
-// Convert string to NTV2Channel enum
-constexpr NTV2Channel ToNTV2Channel(std::string_view value) {
-  for (const auto& [name, channel] : NTV2ChannelMapping) {
-    if (name == value) {
-      return channel;
-    }
-  }
-  return NTV2Channel::NTV2_CHANNEL_INVALID;
-}
-
 // used in more than one function
-// constexpr uint32_t kNumBuffers = 2;  // No longer needed - single buffering only
+constexpr uint32_t kNumBuffers = 2;
 
-AJASourceOp::AJASourceOp() {
-  HOLOSCAN_LOG_INFO("AJASourceOp::AJASourceOp - Constructor called");
-}
+AJASourceOp::AJASourceOp() {}
 
 void AJASourceOp::setup(OperatorSpec& spec) {
   auto& video_buffer_output = spec.output<gxf::Entity>("video_buffer_output");
-  auto& video_buffer_output_2 = spec.output<gxf::Entity>("video_buffer_output_2");
-  spec.input<gxf::Entity>("overlay_buffer_input").condition(ConditionType::kNone);
-  spec.input<gxf::Entity>("overlay_buffer_input_2").condition(ConditionType::kNone);
+  auto& overlay_buffer_input =
+      spec.input<gxf::Entity>("overlay_buffer_input").condition(ConditionType::kNone);
   auto& overlay_buffer_output = spec.output<gxf::Entity>("overlay_buffer_output");
-  auto& overlay_buffer_output_2 = spec.output<gxf::Entity>("overlay_buffer_output_2");
 
   constexpr char kDefaultDevice[] = "0";
-  const std::vector<std::string> kDefaultChannel = {"NTV2_CHANNEL1"};
+  constexpr NTV2Channel kDefaultChannel = NTV2_CHANNEL1;
   constexpr uint32_t kDefaultWidth = 1920;
   constexpr uint32_t kDefaultHeight = 1080;
   constexpr uint32_t kDefaultFramerate = 60;
@@ -83,24 +53,16 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   constexpr bool kDefaultRDMA = false;
   constexpr bool kDefaultEnableOverlay = false;
   constexpr bool kDefaultOverlayRDMA = false;
-  const std::vector<std::string> kDefaultOverlayChannel = {"NTV2_CHANNEL3"};
+  constexpr NTV2Channel kDefaultOverlayChannel = NTV2_CHANNEL2;
 
   spec.param(video_buffer_output_,
              "video_buffer_output",
              "VideoBufferOutput",
-             "Output for the first video buffer.",
+             "Output for the video buffer.",
              &video_buffer_output);
-  spec.param(video_buffer_output_2_,
-             "video_buffer_output_2",
-             "VideoBufferOutput2",
-             "Output for the second video buffer.",
-             &video_buffer_output_2);
   spec.param(
       device_specifier_, "device", "Device", "Device specifier.", std::string(kDefaultDevice));
-  spec.param(channels_param_, "channels", "Channels", "NTV2Channels to use.", kDefaultChannel);
-  spec.param(
-      overlay_channels_param_,"overlay_channels", "OverlayChannels",
-      "NTV2Channels to use for overlay output.", kDefaultOverlayChannel);
+  spec.param(channel_, "channel", "Channel", "NTV2Channel to use.", kDefaultChannel);
   spec.param(width_, "width", "Width", "Width of the stream.", kDefaultWidth);
   spec.param(height_, "height", "Height", "Height of the stream.", kDefaultHeight);
   spec.param(framerate_, "framerate", "Framerate", "Framerate of the stream.", kDefaultFramerate);
@@ -108,26 +70,23 @@ void AJASourceOp::setup(OperatorSpec& spec) {
   spec.param(use_rdma_, "rdma", "RDMA", "Enable RDMA.", kDefaultRDMA);
   spec.param(
       enable_overlay_, "enable_overlay", "EnableOverlay", "Enable overlay.", kDefaultEnableOverlay);
+  spec.param(overlay_channel_,
+             "overlay_channel",
+             "OverlayChannel",
+             "NTV2Channel to use for overlay output.",
+             kDefaultOverlayChannel);
   spec.param(
       overlay_rdma_, "overlay_rdma", "OverlayRDMA", "Enable overlay RDMA.", kDefaultOverlayRDMA);
   spec.param(overlay_buffer_output_,
              "overlay_buffer_output",
              "OverlayBufferOutput",
-             "Output for the first overlay buffer.",
+             "Output for an empty overlay buffer.",
              &overlay_buffer_output);
-  spec.param(overlay_buffer_output_2_,
-             "overlay_buffer_output_2",
-             "OverlayBufferOutput2",
-             "Output for the second overlay buffer.",
-             &overlay_buffer_output_2);
   spec.param(overlay_buffer_input_,
              "overlay_buffer_input",
              "OverlayBufferInput",
-             "Input for overlay buffer for channel 1.");
-  spec.param(overlay_buffer_input_2_,
-             "overlay_buffer_input_2",
-             "OverlayBufferInput2",
-             "Input for overlay buffer for channel 2.");
+             "Input for a filled overlay buffer.",
+             &overlay_buffer_input);
 }
 
 AJAStatus AJASourceOp::DetermineVideoFormat() {
@@ -247,21 +206,16 @@ AJAStatus AJASourceOp::OpenDevice() {
     HOLOSCAN_LOG_ERROR("AJA device cannot capture video.");
     return AJA_STATUS_UNSUPPORTED;
   }
-  // Validate all channels
-  for (const auto& channel : channels_) {
-    if (!NTV2_IS_VALID_CHANNEL(channel)) {
-      HOLOSCAN_LOG_ERROR("Invalid AJA channel: {}", static_cast<int>(channel));
-      return AJA_STATUS_UNSUPPORTED;
-    }
+  if (!NTV2_IS_VALID_CHANNEL(channel_)) {
+    HOLOSCAN_LOG_ERROR("Invalid AJA channel: {}", static_cast<int>(channel_.get()));
+    return AJA_STATUS_UNSUPPORTED;
   }
 
   // Check overlay capabilities.
   if (enable_overlay_) {
-    for (const auto& overlay_channel : overlay_channels_) {
-      if (!NTV2_IS_VALID_CHANNEL(overlay_channel)) {
-        HOLOSCAN_LOG_ERROR("Invalid overlay channel: {}", static_cast<int>(overlay_channel));
-        return AJA_STATUS_UNSUPPORTED;
-      }
+    if (!NTV2_IS_VALID_CHANNEL(overlay_channel_)) {
+      HOLOSCAN_LOG_ERROR("Invalid overlay channel: {}", static_cast<int>(overlay_channel_.get()));
+      return AJA_STATUS_UNSUPPORTED;
     }
 
     if (NTV2DeviceGetNumVideoChannels(device_id_) < 2) {
@@ -288,230 +242,123 @@ AJAStatus AJASourceOp::OpenDevice() {
   return AJA_STATUS_SUCCESS;
 }
 
-
-
 AJAStatus AJASourceOp::SetupVideo() {
   constexpr size_t kWarmupFrames = 5;
 
-  // Setup each channel individually
-  for (const auto& channel : channels_) {
-    NTV2InputSourceKinds input_kind = is_kona_hdmi_ ? NTV2_INPUTSOURCES_HDMI : NTV2_INPUTSOURCES_SDI;
-    NTV2InputSource input_src = ::NTV2ChannelToInputSource(channel, input_kind);
-    NTV2Channel tsi_channel = static_cast<NTV2Channel>(channel + 1);
+  NTV2InputSourceKinds input_kind = is_kona_hdmi_ ? NTV2_INPUTSOURCES_HDMI : NTV2_INPUTSOURCES_SDI;
+  NTV2InputSource input_src = ::NTV2ChannelToInputSource(channel_, input_kind);
+  NTV2Channel tsi_channel = static_cast<NTV2Channel>(channel_ + 1);
 
-    if (!IsRGBFormat(pixel_format_)) {
-      HOLOSCAN_LOG_ERROR("YUV formats not yet supported");
-      return AJA_STATUS_UNSUPPORTED;
-    }
+  if (!IsRGBFormat(pixel_format_)) {
+    HOLOSCAN_LOG_ERROR("YUV formats not yet supported");
+    return AJA_STATUS_UNSUPPORTED;
+  }
 
-    // Detect if the source is YUV or RGB (i.e. if CSC is required or not).
-    bool is_input_rgb(false);
-    if (input_kind == NTV2_INPUTSOURCES_HDMI) {
-      NTV2LHIHDMIColorSpace input_color;
-      device_.GetHDMIInputColor(input_color, channel);
-      is_input_rgb = (input_color == NTV2_LHIHDMIColorSpaceRGB);
-    }
+  // Detect if the source is YUV or RGB (i.e. if CSC is required or not).
+  bool is_input_rgb(false);
+  if (input_kind == NTV2_INPUTSOURCES_HDMI) {
+    NTV2LHIHDMIColorSpace input_color;
+    device_.GetHDMIInputColor(input_color, channel_);
+    is_input_rgb = (input_color == NTV2_LHIHDMIColorSpaceRGB);
+  }
 
-    // Setup the input routing for this channel.
-    device_.EnableChannel(channel);
-    if (use_tsi_) {
-      device_.SetTsiFrameEnable(true, channel);
-      device_.EnableChannel(tsi_channel);
-    }
-    device_.SetMode(channel, NTV2_MODE_CAPTURE);
-    if (NTV2DeviceHasBiDirectionalSDI(device_id_) && NTV2_INPUT_SOURCE_IS_SDI(input_src)) {
-      device_.SetSDITransmitEnable(channel, false);
-    }
-    device_.SetVideoFormat(video_format_, false, false, channel);
-    device_.SetFrameBufferFormat(channel, pixel_format_);
-    if (use_tsi_) { device_.SetFrameBufferFormat(tsi_channel, pixel_format_); }
-    device_.EnableInputInterrupt(channel);
-    device_.SubscribeInputVerticalEvent(channel);
+  // Setup the input routing.
+  device_.ClearRouting();
+  device_.EnableChannel(channel_);
+  if (use_tsi_) {
+    device_.SetTsiFrameEnable(true, channel_);
+    device_.EnableChannel(tsi_channel);
+  }
+  device_.SetMode(channel_, NTV2_MODE_CAPTURE);
+  if (NTV2DeviceHasBiDirectionalSDI(device_id_) && NTV2_INPUT_SOURCE_IS_SDI(input_src)) {
+    device_.SetSDITransmitEnable(channel_, false);
+  }
+  device_.SetVideoFormat(video_format_, false, false, channel_);
+  device_.SetFrameBufferFormat(channel_, pixel_format_);
+  if (use_tsi_) { device_.SetFrameBufferFormat(tsi_channel, pixel_format_); }
+  device_.EnableInputInterrupt(channel_);
+  device_.SubscribeInputVerticalEvent(channel_);
 
-    NTV2OutputXptID input_output_xpt =
-        GetInputSourceOutputXpt(input_src, /*DS2*/ false, is_input_rgb, /*Quadrant*/ 0);
-    NTV2InputXptID fb_input_xpt(GetFrameBufferInputXptFromChannel(channel));
-    if (use_tsi_) {
-      if (!is_input_rgb) {
-        if (NTV2DeviceGetNumCSCs(device_id_) < 4) {
-          HOLOSCAN_LOG_ERROR("CSCs not available for TSI input.");
-          return AJA_STATUS_UNSUPPORTED;
-        }
-        device_.Connect(NTV2_XptFrameBuffer1Input, NTV2_Xpt425Mux1ARGB);
-        device_.Connect(NTV2_XptFrameBuffer1DS2Input, NTV2_Xpt425Mux1BRGB);
-        device_.Connect(NTV2_XptFrameBuffer2Input, NTV2_Xpt425Mux2ARGB);
-        device_.Connect(NTV2_XptFrameBuffer2DS2Input, NTV2_Xpt425Mux2BRGB);
-        device_.Connect(NTV2_Xpt425Mux1AInput, NTV2_XptCSC1VidRGB);
-        device_.Connect(NTV2_Xpt425Mux1BInput, NTV2_XptCSC2VidRGB);
-        device_.Connect(NTV2_Xpt425Mux2AInput, NTV2_XptCSC3VidRGB);
-        device_.Connect(NTV2_Xpt425Mux2BInput, NTV2_XptCSC4VidRGB);
-        device_.Connect(NTV2_XptCSC1VidInput, NTV2_XptHDMIIn1);
-        device_.Connect(NTV2_XptCSC2VidInput, NTV2_XptHDMIIn1Q2);
-        device_.Connect(NTV2_XptCSC3VidInput, NTV2_XptHDMIIn1Q3);
-        device_.Connect(NTV2_XptCSC4VidInput, NTV2_XptHDMIIn1Q4);
-      } else {
-        device_.Connect(NTV2_XptFrameBuffer1Input, NTV2_Xpt425Mux1ARGB);
-        device_.Connect(NTV2_XptFrameBuffer1DS2Input, NTV2_Xpt425Mux1BRGB);
-        device_.Connect(NTV2_XptFrameBuffer2Input, NTV2_Xpt425Mux2ARGB);
-        device_.Connect(NTV2_XptFrameBuffer2DS2Input, NTV2_Xpt425Mux2BRGB);
-        device_.Connect(NTV2_Xpt425Mux1AInput, NTV2_XptHDMIIn1RGB);
-        device_.Connect(NTV2_Xpt425Mux1BInput, NTV2_XptHDMIIn1Q2RGB);
-        device_.Connect(NTV2_Xpt425Mux2AInput, NTV2_XptHDMIIn1Q3RGB);
-        device_.Connect(NTV2_Xpt425Mux2BInput, NTV2_XptHDMIIn1Q4RGB);
-      }
-    } else if (!is_input_rgb) {
-      if (NTV2DeviceGetNumCSCs(device_id_) <= static_cast<int>(channel)) {
-        HOLOSCAN_LOG_ERROR("No CSC available for NTV2_CHANNEL{}", static_cast<int>(channel) + 1);
+  NTV2OutputXptID input_output_xpt =
+      GetInputSourceOutputXpt(input_src, /*DS2*/ false, is_input_rgb, /*Quadrant*/ 0);
+  NTV2InputXptID fb_input_xpt(GetFrameBufferInputXptFromChannel(channel_));
+  if (use_tsi_) {
+    if (!is_input_rgb) {
+      if (NTV2DeviceGetNumCSCs(device_id_) < 4) {
+        HOLOSCAN_LOG_ERROR("CSCs not available for TSI input.");
         return AJA_STATUS_UNSUPPORTED;
       }
-      
-      // Use the default channel-based routing (like the original working code)
-      // This lets the hardware handle the routing naturally
-      NTV2InputXptID csc_input = GetCSCInputXptFromChannel(channel);
-      NTV2OutputXptID csc_output = GetCSCOutputXptFromChannel(channel, false, true);
-      device_.Connect(fb_input_xpt, csc_output);
-      device_.Connect(csc_input, input_output_xpt);
-      
-      HOLOSCAN_LOG_INFO("  Input routing: NTV2_CHANNEL{} -> CSC -> Frame Buffer (using default routing)", static_cast<int>(channel));
+      device_.Connect(NTV2_XptFrameBuffer1Input, NTV2_Xpt425Mux1ARGB);
+      device_.Connect(NTV2_XptFrameBuffer1DS2Input, NTV2_Xpt425Mux1BRGB);
+      device_.Connect(NTV2_XptFrameBuffer2Input, NTV2_Xpt425Mux2ARGB);
+      device_.Connect(NTV2_XptFrameBuffer2DS2Input, NTV2_Xpt425Mux2BRGB);
+      device_.Connect(NTV2_Xpt425Mux1AInput, NTV2_XptCSC1VidRGB);
+      device_.Connect(NTV2_Xpt425Mux1BInput, NTV2_XptCSC2VidRGB);
+      device_.Connect(NTV2_Xpt425Mux2AInput, NTV2_XptCSC3VidRGB);
+      device_.Connect(NTV2_Xpt425Mux2BInput, NTV2_XptCSC4VidRGB);
+      device_.Connect(NTV2_XptCSC1VidInput, NTV2_XptHDMIIn1);
+      device_.Connect(NTV2_XptCSC2VidInput, NTV2_XptHDMIIn1Q2);
+      device_.Connect(NTV2_XptCSC3VidInput, NTV2_XptHDMIIn1Q3);
+      device_.Connect(NTV2_XptCSC4VidInput, NTV2_XptHDMIIn1Q4);
     } else {
-      device_.Connect(fb_input_xpt, input_output_xpt);
+      device_.Connect(NTV2_XptFrameBuffer1Input, NTV2_Xpt425Mux1ARGB);
+      device_.Connect(NTV2_XptFrameBuffer1DS2Input, NTV2_Xpt425Mux1BRGB);
+      device_.Connect(NTV2_XptFrameBuffer2Input, NTV2_Xpt425Mux2ARGB);
+      device_.Connect(NTV2_XptFrameBuffer2DS2Input, NTV2_Xpt425Mux2BRGB);
+      device_.Connect(NTV2_Xpt425Mux1AInput, NTV2_XptHDMIIn1RGB);
+      device_.Connect(NTV2_Xpt425Mux1BInput, NTV2_XptHDMIIn1Q2RGB);
+      device_.Connect(NTV2_Xpt425Mux2AInput, NTV2_XptHDMIIn1Q3RGB);
+      device_.Connect(NTV2_Xpt425Mux2BInput, NTV2_XptHDMIIn1Q4RGB);
     }
+  } else if (!is_input_rgb) {
+    if (NTV2DeviceGetNumCSCs(device_id_) <= static_cast<int>(channel_)) {
+      HOLOSCAN_LOG_ERROR("No CSC available for NTV2_CHANNEL{}", static_cast<int>(channel_) + 1);
+      return AJA_STATUS_UNSUPPORTED;
+    }
+    NTV2InputXptID csc_input = GetCSCInputXptFromChannel(channel_);
+    NTV2OutputXptID csc_output =
+        GetCSCOutputXptFromChannel(channel_, /*inIsKey*/ false, /*inIsRGB*/ true);
+    device_.Connect(fb_input_xpt, csc_output);
+    device_.Connect(csc_input, input_output_xpt);
+  } else {
+    device_.Connect(fb_input_xpt, input_output_xpt);
   }
 
-  // Set each channel to its own dedicated hardware frame for independent capture
-  
-  // Set each channel to its own dedicated hardware frame for independent capture
-  for (size_t i = 0; i < channels_.size(); ++i) {
-    const auto& channel = channels_[i];
-    uint32_t hw_frame = i;  // 0 for first, 1 for second
-    device_.SetInputFrame(channel, hw_frame);
-    
-    // Ensure consistent video format across all channels
-    device_.SetVideoFormat(video_format_, false, false, channel);
-    device_.SetFrameBufferFormat(channel, pixel_format_);
-    
-    HOLOSCAN_LOG_INFO("Channel {}: NTV2_CHANNEL{} -> Frame Buffer {} (hardware frame {})", 
-                      i + 1, static_cast<int>(channel), hw_frame, hw_frame);
-    HOLOSCAN_LOG_INFO("  Hardware frame {} will receive data from NTV2_CHANNEL{}", hw_frame, static_cast<int>(channel));
-    HOLOSCAN_LOG_INFO("  Note: Frame Buffer {} input is hardwired to NTV2_CHANNEL{}", hw_frame, static_cast<int>(channel));
-  }
-
-  // Setup overlay channels with one-to-one mapping to input channels
   if (enable_overlay_) {
-    // Ensure we have matching numbers of input and overlay channels
-    if (overlay_channels_.size() > channels_.size()) {
-      HOLOSCAN_LOG_WARN("More overlay channels than input channels. Some overlay channels will be unused.");
-    }
-    
-    // Map each input channel to its corresponding overlay channel
-    size_t num_overlays = std::min(channels_.size(), overlay_channels_.size());
-    
-    for (size_t i = 0; i < num_overlays; ++i) {
-      NTV2Channel input_channel = channels_[i];
-      NTV2Channel overlay_channel = overlay_channels_[i];
-      
-      HOLOSCAN_LOG_INFO("Setting up overlay: input channel {} -> overlay channel {}", 
-                        static_cast<int>(input_channel), static_cast<int>(overlay_channel));
-      HOLOSCAN_LOG_INFO("  Channel {}: Input NTV2_CHANNEL{} -> Frame Buffer {} -> video_buffer_output{}", 
-                        i + 1, static_cast<int>(input_channel), i, (i == 0) ? "" : "_2");
-      HOLOSCAN_LOG_INFO("  Overlay {}: NTV2_CHANNEL{} -> Frame Buffer {} -> CSC -> Mixer{} -> SDI Output", 
-                        i + 1, static_cast<int>(overlay_channel), i + 2, i + 1);
-      
-      // Setup output channel.
-      device_.SetReference(NTV2_REFERENCE_INPUT1);
-      device_.SetMode(overlay_channel, NTV2_MODE_DISPLAY);
-      device_.SetSDITransmitEnable(overlay_channel, true);
-      device_.SetVideoFormat(video_format_, false, false, overlay_channel);
-      device_.SetFrameBufferFormat(overlay_channel, pixel_format_);  // Use same format as input
+    // Setup output channel.
+    device_.SetReference(NTV2_REFERENCE_INPUT1);
+    device_.SetMode(overlay_channel_, NTV2_MODE_DISPLAY);
+    device_.SetSDITransmitEnable(overlay_channel_, true);
+    device_.SetVideoFormat(video_format_, false, false, overlay_channel_);
+    device_.SetFrameBufferFormat(overlay_channel_, NTV2_FBF_ABGR);
 
-      // Setup mixer controls - use different mixer for each channel
-      int mixer_index = i;  // Mixer 0 for first channel, Mixer 1 for second channel
-      device_.SetMixerFGInputControl(mixer_index, NTV2MIXERINPUTCONTROL_SHAPED);
-      device_.SetMixerBGInputControl(mixer_index, NTV2MIXERINPUTCONTROL_FULLRASTER);
-      device_.SetMixerCoefficient(mixer_index, 0x10000);
-      device_.SetMixerFGMatteEnabled(mixer_index, false);
-      device_.SetMixerBGMatteEnabled(mixer_index, false);
-      
-      // Set mixer reference based on VSync signal availability
-      device_.SetReference(NTV2_REFERENCE_INPUT3);
-      
-      // Setup routing (overlay frame to CSC, CSC and SDI input to mixer, mixer to SDI output).
-      NTV2OutputDestination output_dst = ::NTV2ChannelToOutputDestination(overlay_channel);
-      
-      // Use the default channel-based routing (like the original working code)
-      // Connect overlay frame to CSC (let hardware handle the routing)
-      device_.Connect(GetCSCInputXptFromChannel(overlay_channel),
-                      GetFrameBufferOutputXptFromChannel(overlay_channel, true /*RGB*/));
-      
-      // Connect CSC to mixer foreground - use different mixer for each channel
-      if (i == 0) {
-        // First channel: overlay goes to Mixer1 foreground
-        device_.Connect(NTV2_XptMixer1FGVidInput,
-                        GetCSCOutputXptFromChannel(overlay_channel, false /*inIsKey*/, true /*inIsRGB*/));
-        device_.Connect(NTV2_XptMixer1FGKeyInput,
-                        GetCSCOutputXptFromChannel(overlay_channel, true /*inIsKey*/, true /*inIsRGB*/));
-        
-        HOLOSCAN_LOG_INFO("  Overlay routing: Frame Buffer {} → CSC → Mixer1", i + 2);
-      } else {
-        // Second channel: overlay goes to Mixer2 foreground
-        device_.Connect(NTV2_XptMixer2FGVidInput,
-                        GetCSCOutputXptFromChannel(overlay_channel, false /*inIsKey*/, true /*inIsRGB*/));
-        device_.Connect(NTV2_XptMixer2FGKeyInput,
-                        GetCSCOutputXptFromChannel(overlay_channel, true /*inIsKey*/, true /*inIsRGB*/));
-        
-        HOLOSCAN_LOG_INFO("  Overlay routing: Frame Buffer {} → CSC → Mixer2", i + 2);
-      }
-      
-      // Connect the mixer background to the corresponding input channel
-      NTV2InputSourceKinds input_kind = is_kona_hdmi_ ? NTV2_INPUTSOURCES_HDMI : NTV2_INPUTSOURCES_SDI;
-      NTV2InputSource input_src = ::NTV2ChannelToInputSource(input_channel, input_kind);
-      bool is_input_rgb = false;
-      if (input_kind == NTV2_INPUTSOURCES_HDMI) {
-        NTV2LHIHDMIColorSpace input_color;
-        device_.GetHDMIInputColor(input_color, input_channel);
-        is_input_rgb = (input_color == NTV2_LHIHDMIColorSpaceRGB);
-      }
-      NTV2OutputXptID input_output_xpt = GetInputSourceOutputXpt(input_src, false, is_input_rgb, 0);
-      
-      // Connect background to the same mixer as foreground for each channel
-      if (i == 0) {
-        // First channel: background goes to Mixer1
-        device_.Connect(NTV2_XptMixer1BGVidInput, input_output_xpt);
-      } else {
-        // Second channel: background goes to Mixer2
-        device_.Connect(NTV2_XptMixer2BGVidInput, input_output_xpt);
-      }
-      
-      // Connect mixer output to SDI output - each channel uses its own mixer
-      if (i == 0) {
-        // First channel: output from Mixer1
-        device_.Connect(GetOutputDestInputXpt(output_dst), NTV2_XptMixer1VidYUV);
-      } else {
-        // Second channel: output from Mixer2
-        device_.Connect(GetOutputDestInputXpt(output_dst), NTV2_XptMixer2VidYUV);
-      }
+    // Setup mixer controls.
+    device_.SetMixerFGInputControl(0, NTV2MIXERINPUTCONTROL_SHAPED);
+    device_.SetMixerBGInputControl(0, NTV2MIXERINPUTCONTROL_FULLRASTER);
+    device_.SetMixerCoefficient(0, 0x10000);
+    device_.SetMixerFGMatteEnabled(0, false);
+    device_.SetMixerBGMatteEnabled(0, false);
 
-      // Set initial output frame (overlay uses HW frames 2 and 3).
-      uint32_t hw_overlay_frame = i + 2;  // 2 for first overlay, 3 for second overlay
-      device_.SetOutputFrame(overlay_channel, hw_overlay_frame);
-      HOLOSCAN_LOG_INFO("Set overlay channel {} to hardware frame {}", static_cast<int>(overlay_channel), hw_overlay_frame);
-    }
-    
-    // Log the complete routing summary
-    HOLOSCAN_LOG_INFO("=== COMPLETE ROUTING SUMMARY ===");
-    HOLOSCAN_LOG_INFO("Channel 1: NTV2_CHANNEL{} (Frame Buffer 0 → CSC) + NTV2_CHANNEL{} (Frame Buffer 2 → CSC → Mixer1) -> SDI Output", 
-                      static_cast<int>(channels_[0]), static_cast<int>(overlay_channels_[0]));
-    if (channels_.size() > 1) {
-      HOLOSCAN_LOG_INFO("Channel 2: NTV2_CHANNEL{} (Frame Buffer 1 → CSC) + NTV2_CHANNEL{} (Frame Buffer 3 → CSC → Mixer2) -> SDI Output", 
-                        static_cast<int>(channels_[1]), static_cast<int>(overlay_channels_[1]));
-    }
-    HOLOSCAN_LOG_INFO("Note: Channel 1 uses Mixer1, Channel 2 uses Mixer2");
-    HOLOSCAN_LOG_INFO("=================================");
+    // Setup routing (overlay frame to CSC, CSC and SDI input to mixer, mixer to SDI output).
+    NTV2OutputDestination output_dst = ::NTV2ChannelToOutputDestination(overlay_channel_);
+    device_.Connect(GetCSCInputXptFromChannel(overlay_channel_),
+                    GetFrameBufferOutputXptFromChannel(overlay_channel_, true /*RGB*/));
+    device_.Connect(NTV2_XptMixer1FGVidInput,
+                    GetCSCOutputXptFromChannel(overlay_channel_, false /*Key*/));
+    device_.Connect(NTV2_XptMixer1FGKeyInput,
+                    GetCSCOutputXptFromChannel(overlay_channel_, true /*Key*/));
+    device_.Connect(NTV2_XptMixer1BGVidInput, input_output_xpt);
+    device_.Connect(GetOutputDestInputXpt(output_dst), NTV2_XptMixer1VidYUV);
+
+    // Set initial output frame (overlay uses HW frames 2 and 3).
+    current_overlay_hw_frame_ = 2;
+    device_.SetOutputFrame(overlay_channel_, current_overlay_hw_frame_);
   }
 
-  // Wait for vertical interrupt on first channel
-  // AJA devices keep channels synchronized when set to same frame
-  device_.WaitForInputVerticalInterrupt(channels_.front(), kWarmupFrames);
+  // Wait for a number of frames to acquire video signal.
+  current_hw_frame_ = 0;
+  device_.SetInputFrame(channel_, current_hw_frame_);
+  device_.WaitForInputVerticalInterrupt(channel_, kWarmupFrames);
 
   return AJA_STATUS_SUCCESS;
 }
@@ -568,43 +415,11 @@ void AJASourceOp::FreeBuffers(std::vector<void*>& buffers, bool rdma) {
 AJAStatus AJASourceOp::SetupBuffers() {
   auto size = GetVideoWriteSize(video_format_, pixel_format_);
 
-  // Initialize buffer arrays for each channel (2 buffers per channel for double buffering)
-  channel_buffers_.resize(channels_.size());
-  if (enable_overlay_) {
-    overlay_channel_buffers_.resize(overlay_channels_.size());
-  }
+  if (!AllocateBuffers(buffers_, kNumBuffers, size, use_rdma_)) { return AJA_STATUS_INITIALIZE; }
 
-  // Clear the channel to buffer mappings
-  channel_to_buffer_map_.clear();
   if (enable_overlay_) {
-    overlay_channel_to_buffer_map_.clear();
-  }
-
-  // Allocate buffers for each input channel sequentially
-  for (size_t i = 0; i < channels_.size(); ++i) {
-    if (!AllocateBuffers(channel_buffers_[i], 2, size, use_rdma_)) {  // 2 buffers per channel for double buffering
-      HOLOSCAN_LOG_ERROR("Failed to allocate buffers for channel {} (buffer index: {})", 
-                        static_cast<int>(channels_[i]), i);
+    if (!AllocateBuffers(overlay_buffers_, kNumBuffers, size, overlay_rdma_)) {
       return AJA_STATUS_INITIALIZE;
-    }
-    // Map this channel to buffer index i
-    channel_to_buffer_map_[channels_[i]] = i;
-    HOLOSCAN_LOG_INFO("Allocated 2 buffers for channel {} (buffer index: {}) (size: {} bytes)", 
-                      static_cast<int>(channels_[i]), i, size);
-  }
-
-  // Allocate overlay buffers for each overlay channel sequentially
-  if (enable_overlay_) {
-    for (size_t i = 0; i < overlay_channels_.size(); ++i) {
-      if (!AllocateBuffers(overlay_channel_buffers_[i], 2, size, overlay_rdma_)) {  // 2 buffers per channel for double buffering
-        HOLOSCAN_LOG_ERROR("Failed to allocate overlay buffers for channel {} (buffer index: {})", 
-                          static_cast<int>(overlay_channels_[i]), i);
-        return AJA_STATUS_INITIALIZE;
-      }
-      // Map this overlay channel to buffer index i
-      overlay_channel_to_buffer_map_[overlay_channels_[i]] = i;
-      HOLOSCAN_LOG_INFO("Allocated 2 overlay buffers for channel {} (buffer index: {}) (size: {} bytes)", 
-                        static_cast<int>(overlay_channels_[i]), i, size);
     }
   }
 
@@ -623,32 +438,14 @@ void AJASourceOp::initialize() {
     ArgumentSetter::set_param(param_wrap, (*enable_overlay_arg));
   }
   if (!enable_overlay_.has_value()) { enable_overlay_.set_default_value(); }
-  
-  // DEBUG ONLY: Disable second outputs to focus on first channel
-  // spec()->outputs()["video_buffer_output_2"]->condition(ConditionType::kNone);
-  // spec()->outputs()["overlay_buffer_output"]->condition(ConditionType::kNone);
-  // spec()->outputs()["overlay_buffer_output_2"]->condition(ConditionType::kNone);
-  HOLOSCAN_LOG_INFO("DEBUG: Disabled video_buffer_output_2 and overlay_buffer_output_2 for single channel testing");
-  
+  // If overlay is disabled, insert ConditionType::kNone
+  // condition so that its default condition (DownstreamMessageAffordableCondition) is not added
+  // during Operator::initialize().
+  if (!enable_overlay_.get()) {
+    spec()->outputs()["overlay_buffer_output"]->condition(ConditionType::kNone);
+  }
+
   Operator::initialize();
-
-  channels_.clear();
-  overlay_channels_.clear();
-  for (const auto& channel_str : channels_param_.get()) {
-    channels_.push_back(ToNTV2Channel(channel_str));
-  }
-  for (const auto& overlay_channel_str : overlay_channels_param_.get()) {
-    overlay_channels_.push_back(ToNTV2Channel(overlay_channel_str));
-  }
-  
-
-  
-  // Set the active channels (first in each list)
-  channel_ = channels_.front();
-  overlay_channel_ = overlay_channels_.front();
-  
-  // Initialize buffer tracking for each channel (start with buffer 0)
-  current_channel_buffers_.resize(channels_.size(), 0);
 }
 
 void AJASourceOp::start() {
@@ -674,11 +471,11 @@ void AJASourceOp::start() {
                     height_,
                     framerate,
                     (interlaced_ ? "(interlaced) " : ""),
-                    (static_cast<int>(channel_) + 1));
+                    (channel_.get() + 1));
   HOLOSCAN_LOG_INFO("AJA Source: RDMA is {}", use_rdma_ ? "enabled" : "disabled");
   if (enable_overlay_) {
     HOLOSCAN_LOG_INFO("AJA Source: Outputting overlay to NTV2_CHANNEL{}",
-                      (static_cast<int>(overlay_channel_) + 1));
+                      (overlay_channel_.get() + 1));
     HOLOSCAN_LOG_INFO("AJA Source: Overlay RDMA is {}", overlay_rdma_ ? "enabled" : "disabled");
   } else {
     HOLOSCAN_LOG_INFO("AJA Source: Overlay output is disabled");
@@ -705,99 +502,47 @@ void AJASourceOp::start() {
 
 void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
                           ExecutionContext& context) {
-  HOLOSCAN_LOG_INFO("=== AJA Source Compute Start ===");
-  HOLOSCAN_LOG_INFO("Double buffering state - Channel buffers: [{}]", 
-                    fmt::join(current_channel_buffers_, ", "));
-  
-  // Handle overlay inputs for all channels
-  size_t num_channels = channels_.size();
-  size_t num_overlay_channels = overlay_channels_.size();
-  std::vector<bool> have_overlay_in(num_overlay_channels, false);
-  std::vector<holoscan::gxf::Entity> overlay_in_messages(num_overlay_channels);
-  std::vector<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>> overlay_buffers(num_overlay_channels);
-  
-  if (enable_overlay_) {
-    // Receive overlay inputs for all channels using a loop
-    for (size_t i = 0; i < num_overlay_channels; ++i) {
-      const char* input_name = (i == 0) ? "overlay_buffer_input" : "overlay_buffer_input_2";
-      auto maybe_overlay_message = op_input.receive<gxf::Entity>(input_name);
-      
-      if (!maybe_overlay_message || maybe_overlay_message.value().is_null()) {
-        HOLOSCAN_LOG_TRACE("Operator '{}' failed to find {}", name_, input_name);
-      } else {
-        overlay_in_messages[i] = maybe_overlay_message.value();
-        have_overlay_in[i] = true;
-        try {
-          overlay_buffers[i] = holoscan::gxf::get_videobuffer(overlay_in_messages[i]);
-          HOLOSCAN_LOG_INFO("Received overlay input for channel {}", i + 1);
-        } catch (const std::runtime_error& r_) {
-          HOLOSCAN_LOG_ERROR("Failed to read VideoBuffer from {}: {}", input_name, r_.what());
-        }
-      }
-    }
-    
-    // Process overlays for each channel
-    if (std::any_of(have_overlay_in.begin(), have_overlay_in.end(), [](bool b) { return b; })) {
-      // Apply overlays using fixed hardware frames (2 for first channel, 3 for second)
-      for (size_t i = 0; i < num_overlay_channels; ++i) {
-        if (have_overlay_in[i] && overlay_buffers[i]) {
-          uint32_t hw_overlay_frame = i + 2;  // 2 for first, 3 for second
-          ULWord* ptr = reinterpret_cast<ULWord*>(overlay_buffers[i]->pointer());
-          
-          // Write overlay to hardware frame
-          device_.DMAWriteFrame(hw_overlay_frame, ptr, overlay_buffers[i]->size());
-          device_.SetOutputFrame(overlay_channels_[i], hw_overlay_frame);
-          
-          HOLOSCAN_LOG_INFO("Applied overlay to channel {} using hardware frame {}", i + 1, hw_overlay_frame);
-        }
-      }
-  
-  // Set mixer modes for both channels
-  if (enable_overlay_) {
-    device_.SetMixerMode(0, NTV2MIXERMODE_MIX);  // First channel uses Mixer1
-    if (num_overlay_channels > 1) {
-      device_.SetMixerMode(1, NTV2MIXERMODE_MIX);  // Second channel uses Mixer2
-    }
+  // holoscan::gxf::Entity
+  bool have_overlay_in = false;
+  holoscan::gxf::Entity overlay_in_message;
+  auto maybe_overlay_message = op_input.receive<gxf::Entity>("overlay_buffer_input");
+  if (!maybe_overlay_message || maybe_overlay_message.value().is_null()) {
+    HOLOSCAN_LOG_TRACE("Operator '{}' failed to find overlay_buffer_input", name_);
+  } else {
+    overlay_in_message = maybe_overlay_message.value();
+    have_overlay_in = true;
   }
+
+  if (enable_overlay_ && have_overlay_in) {
+    nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> overlay_buffer;
+    try {
+      overlay_buffer = holoscan::gxf::get_videobuffer(overlay_in_message);
+      // Overlay uses HW frames 2 and 3.
+      current_overlay_hw_frame_ = ((current_overlay_hw_frame_ + 1) % 2) + 2;
+
+      ULWord* ptr = reinterpret_cast<ULWord*>(overlay_buffer->pointer());
+      device_.DMAWriteFrame(current_overlay_hw_frame_, ptr, overlay_buffer->size());
+      device_.SetOutputFrame(overlay_channel_, current_overlay_hw_frame_);
+      device_.SetMixerMode(0, NTV2MIXERMODE_MIX);
+    } catch (const std::runtime_error& r_) {
+      HOLOSCAN_LOG_TRACE("Failed to read VideoBuffer with error: {}", std::string(r_.what()));
     }
   }
 
-  // Wait for vertical interrupt on first channel
-  device_.WaitForInputFieldID(NTV2_FIELD0, channels_.front());
+  // Update the next input frame and wait until it starts.
+  uint32_t next_hw_frame = (current_hw_frame_ + 1) % 2;
+  device_.SetInputFrame(channel_, next_hw_frame);
+  device_.WaitForInputFieldID(NTV2_FIELD0, channel_);
 
-  // Read frames from all channels using their dedicated hardware frames with double buffering
+  // Read the last completed frame.
   auto size = GetVideoWriteSize(video_format_, pixel_format_);
-  std::vector<void*> current_frame_buffers(num_channels);
-  std::vector<uint8_t> filled_buffer_indices(num_channels);
-  
-  for (size_t i = 0; i < num_channels; ++i) {
-    const auto& channel = channels_[i];
-    size_t buffer_index = channel_to_buffer_map_[channel];
-    uint8_t current_buffer = current_channel_buffers_[i];
-    auto ptr = static_cast<ULWord*>(channel_buffers_[buffer_index][current_buffer]);
-    
-    // Each channel has its dedicated hardware frame (0 for first, 1 for second)
-    uint32_t hw_frame = i;
-    
-    HOLOSCAN_LOG_INFO("=== CHANNEL {} BUFFER MAPPING ===", i + 1);
-    HOLOSCAN_LOG_INFO("  Channel: NTV2_CHANNEL{}", static_cast<int>(channel));
-    HOLOSCAN_LOG_INFO("  Hardware Frame: {}", hw_frame);
-    HOLOSCAN_LOG_INFO("  Allocated Buffer Index: {}", buffer_index);
-    HOLOSCAN_LOG_INFO("  Current Buffer: {}", static_cast<int>(current_buffer));
-    HOLOSCAN_LOG_INFO("  Buffer Address: 0x{:x}", reinterpret_cast<uintptr_t>(ptr));
-    
-    device_.DMAReadFrame(hw_frame, ptr, size);
-    current_frame_buffers[i] = ptr;
-    filled_buffer_indices[i] = current_buffer;  // Remember which buffer was just filled
-    
-    HOLOSCAN_LOG_INFO("  Successfully read from hardware frame {} to buffer {}[{}] (NTV2_CHANNEL{})", 
-                      hw_frame, buffer_index, static_cast<int>(current_buffer), static_cast<int>(channel));
-    
-    // Update buffer index for next tick (alternate between 0 and 1)
-    current_channel_buffers_[i] = (current_buffer + 1) % 2;
-  }
+  auto ptr = static_cast<ULWord*>(buffers_[current_buffer_]);
+  device_.DMAReadFrame(current_hw_frame_, ptr, size);
 
-  // Common buffer info
+  // Set the frame to read for the next tick.
+  current_hw_frame_ = next_hw_frame;
+
+  // Common (output and overlay) buffer info
   nvidia::gxf::VideoTypeTraits<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA> video_type;
   nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA> color_format;
   auto color_planes = color_format.getDefaultColorPlanes(width_, height_);
@@ -807,114 +552,61 @@ void AJASourceOp::compute(InputContext& op_input, OutputContext& op_output,
                                     std::move(color_planes),
                                     nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR};
 
-  // Create and emit overlay outputs
   if (enable_overlay_) {
-    for (size_t i = 0; i < num_overlay_channels; ++i) {
-      const auto& overlay_channel = overlay_channels_[i];
-      size_t buffer_index = overlay_channel_to_buffer_map_[overlay_channel];
-      
-      auto overlay_output = nvidia::gxf::Entity::New(context.context());
-      if (!overlay_output) {
-        HOLOSCAN_LOG_ERROR("Failed to allocate overlay output for channel {}; terminating.", i + 1);
-        return;
-      }
-      
-      auto overlay_buffer = overlay_output.value().add<nvidia::gxf::VideoBuffer>();
-      if (!overlay_buffer) {
-        HOLOSCAN_LOG_ERROR("Failed to allocate overlay buffer for channel {}; terminating.", i + 1);
-        return;
-      }
-      
-      auto overlay_storage_type = overlay_rdma_ ? nvidia::gxf::MemoryStorageType::kDevice
-                                                : nvidia::gxf::MemoryStorageType::kHost;
-      
-      // Read overlay data from hardware frame (2 for first, 3 for second)
-      uint32_t hw_overlay_frame = i + 2;
-      uint8_t current_overlay_buffer = current_channel_buffers_[i];  // Use same buffer pattern as input channels
-      auto ptr = static_cast<ULWord*>(overlay_channel_buffers_[buffer_index][current_overlay_buffer]);
-      
-      // Read the overlay data from the hardware frame into our buffer
-      device_.DMAReadFrame(hw_overlay_frame, ptr, size);
-      
-      // Wrap the buffer that contains the overlay data
-      overlay_buffer.value()->wrapMemory(info, size, overlay_storage_type, ptr, nullptr);
-      
-      HOLOSCAN_LOG_INFO("Read overlay data from hardware frame {} to buffer {}[{}] for channel {}", 
-                        hw_overlay_frame, buffer_index, static_cast<int>(current_overlay_buffer), i + 1);
-      
-      // Update buffer index for next tick (alternate between 0 and 1)
-      current_channel_buffers_[i] = (current_overlay_buffer + 1) % 2;
-      
-      // Emit to the appropriate overlay output
-      auto result = gxf::Entity(std::move(overlay_output.value()));
-      const char* output_name = (i == 0) ? "overlay_buffer_output" : "overlay_buffer_output_2";
-      op_output.emit(result, output_name);
-      HOLOSCAN_LOG_INFO("Successfully emitted overlay output for channel {} from buffer {}[{}]", 
-                        i + 1, buffer_index, static_cast<int>(current_overlay_buffer));
-    }
-  }
-
-  // Create and emit video outputs for all channels
-  for (size_t i = 0; i < num_channels; ++i) {
-    const auto& channel = channels_[i];
-    size_t buffer_index = channel_to_buffer_map_[channel];
-    
-    auto video_output = nvidia::gxf::Entity::New(context.context());
-    if (!video_output) {
-      throw std::runtime_error(fmt::format("Failed to allocate video output for channel {}; terminating.", i + 1));
+    // Pass an overlay buffer downstream.
+    auto overlay_output = nvidia::gxf::Entity::New(context.context());
+    if (!overlay_output) {
+      HOLOSCAN_LOG_ERROR("Failed to allocate overlay output; terminating.");
       return;
     }
 
-    auto video_buffer = video_output.value().add<nvidia::gxf::VideoBuffer>();
-    if (!video_buffer) {
-      throw std::runtime_error(fmt::format("Failed to allocate video buffer for channel {}; terminating.", i + 1));
+    auto overlay_buffer = overlay_output.value().add<nvidia::gxf::VideoBuffer>();
+    if (!overlay_buffer) {
+      HOLOSCAN_LOG_ERROR("Failed to allocate overlay buffer; terminating.");
       return;
     }
 
-    auto storage_type = use_rdma_ ? nvidia::gxf::MemoryStorageType::kDevice 
-                                   : nvidia::gxf::MemoryStorageType::kHost;
-    
-    // Use the buffer that was just filled for this specific channel
-    video_buffer.value()->wrapMemory(info, size, storage_type, current_frame_buffers[i], nullptr);
+    auto overlay_storage_type = overlay_rdma_ ? nvidia::gxf::MemoryStorageType::kDevice
+                                              : nvidia::gxf::MemoryStorageType::kHost;
+    overlay_buffer.value()->wrapMemory(
+        info, size, overlay_storage_type, overlay_buffers_[current_buffer_], nullptr);
 
-    // Emit to the appropriate output
-    auto result = gxf::Entity(std::move(video_output.value()));
-    const char* output_name = (i == 0) ? "video_buffer_output" : "video_buffer_output_2";
-    op_output.emit(result, output_name);
-    HOLOSCAN_LOG_INFO("Successfully emitted video output for channel {} (NTV2_CHANNEL{}) from buffer {}[{}]", 
-                      i + 1, static_cast<int>(channel), channel_to_buffer_map_[channel], static_cast<int>(filled_buffer_indices[i]));
+    auto overlay_result = gxf::Entity(std::move(overlay_output.value()));
+    op_output.emit(overlay_result, "overlay_buffer_output");
   }
 
-  HOLOSCAN_LOG_INFO("=== AJA Source Compute Complete ===");
-  HOLOSCAN_LOG_INFO("Buffer flow: Each channel alternates between buffer 0 and 1 for smooth capture");
-  HOLOSCAN_LOG_INFO("Next tick will use buffers: [{}]", fmt::join(current_channel_buffers_, ", "));
+  // Pass the video output buffer downstream.
+  auto video_output = nvidia::gxf::Entity::New(context.context());
+  if (!video_output) {
+    throw std::runtime_error("Failed to allocate video output; terminating.");
+    return;
+  }
+
+  auto video_buffer = video_output.value().add<nvidia::gxf::VideoBuffer>();
+  if (!video_buffer) {
+    throw std::runtime_error("Failed to allocate video buffer; terminating.");
+    return;
+  }
+
+  auto storage_type =
+      use_rdma_ ? nvidia::gxf::MemoryStorageType::kDevice : nvidia::gxf::MemoryStorageType::kHost;
+  video_buffer.value()->wrapMemory(info, size, storage_type, buffers_[current_buffer_], nullptr);
+
+  auto result = gxf::Entity(std::move(video_output.value()));
+  op_output.emit(result, "video_buffer_output");
+
+  // Update the current buffer (index shared between video and overlay)
+  current_buffer_ = (current_buffer_ + 1) % kNumBuffers;
 }
 
 void AJASourceOp::stop() {
-  // Unsubscribe from all channels
-  for (const auto& channel : channels_) {
-    device_.UnsubscribeInputVerticalEvent(channel);
-  }
-  
+  device_.UnsubscribeInputVerticalEvent(channel_);
   device_.DMABufferUnlockAll();
 
-  if (enable_overlay_) { 
-    device_.SetMixerMode(0, NTV2MIXERMODE_FOREGROUND_OFF);  // Disable Mixer1
-    if (overlay_channels_.size() > 1) {
-      device_.SetMixerMode(1, NTV2MIXERMODE_FOREGROUND_OFF);  // Disable Mixer2
-    }
-  }
+  if (enable_overlay_) { device_.SetMixerMode(0, NTV2MIXERMODE_FOREGROUND_OFF); }
 
-  // Free buffers for all channels
-  for (auto& channel_buffers : channel_buffers_) {
-    FreeBuffers(channel_buffers, use_rdma_);
-  }
-  
-  if (enable_overlay_) {
-    for (auto& overlay_buffers : overlay_channel_buffers_) {
-      FreeBuffers(overlay_buffers, overlay_rdma_);
-    }
-  }
+  FreeBuffers(buffers_, use_rdma_);
+  FreeBuffers(overlay_buffers_, overlay_rdma_);
 }
 
 bool AJASourceOp::GetNTV2VideoFormatTSI(NTV2VideoFormat* format) {
@@ -937,4 +629,3 @@ bool AJASourceOp::GetNTV2VideoFormatTSI(NTV2VideoFormat* format) {
 }
 
 }  // namespace holoscan::ops
-
