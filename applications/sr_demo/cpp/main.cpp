@@ -26,6 +26,9 @@
 #include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
 #include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
 
+#ifdef AJA_SOURCE
+#include <aja_source.hpp>
+#endif
 
 class SrDemoApp : public holoscan::Application {
  public:
@@ -35,9 +38,25 @@ class SrDemoApp : public holoscan::Application {
     // Create shared resources
     auto cuda_stream_pool = make_resource<CudaStreamPool>("cuda_stream_pool");
     
-    auto replayer =
-        make_operator<ops::VideoStreamReplayerOp>("replayer", from_config("replayer"), 
+    // Get the source type from config
+    std::string source_type = from_config("source.type").as<std::string>();
+    
+    std::shared_ptr<Operator> source;
+    
+    if (source_type == "aja") {
+#ifdef AJA_SOURCE
+      source = make_operator<ops::AJASourceOp>("aja_source", from_config("aja"));
+      HOLOSCAN_LOG_INFO("Using AJA source for video input");
+#else
+      throw std::runtime_error("AJA source requested but not available. Please enable AJA at build time.");
+#endif
+    } else if (source_type == "replayer") {
+      source = make_operator<ops::VideoStreamReplayerOp>("replayer", from_config("replayer"), 
         Arg("allocator") = make_resource<UnboundedAllocator>("pool_replayer"));
+      HOLOSCAN_LOG_INFO("Using video replayer for video input");
+    } else {
+      throw std::runtime_error("Unknown source type: " + source_type + ". Supported types: 'aja', 'replayer'");
+    }
     
     auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"),
         Arg("cuda_stream_pool") = cuda_stream_pool);
@@ -47,9 +66,9 @@ class SrDemoApp : public holoscan::Application {
         from_config("sr_inference"),
         Arg("allocator") = make_resource<UnboundedAllocator>("pool_inference"));
 
-    // auto drop_alpha =
-    //     make_operator<ops::FormatConverterOp>("drop_alpha", from_config("drop_alpha"),
-    //     Arg("pool") = make_resource<UnboundedAllocator>("pool_drop_alpha"));
+    auto drop_alpha =
+        make_operator<ops::FormatConverterOp>("drop_alpha", from_config("drop_alpha"),
+        Arg("pool") = make_resource<UnboundedAllocator>("pool_drop_alpha"));
 
     auto preprocessor =
         make_operator<ops::FormatConverterOp>("preprocessor", from_config("inference_preprocessor"),
@@ -59,28 +78,28 @@ class SrDemoApp : public holoscan::Application {
         make_operator<ops::FormatConverterOp>("postprocessor", from_config("inference_postprocessor"),
          Arg("pool") = make_resource<UnboundedAllocator>("pool_postprocessor"));
 
-    add_flow(replayer, preprocessor);
-    // add_flow(drop_alpha, preprocessor);
+    add_flow(source, drop_alpha, {{"video_buffer_output", ""}});
+    add_flow(drop_alpha, preprocessor);
     add_flow(preprocessor, inference, {{"", "receivers"}});
     add_flow(inference, postprocessor);
     add_flow(postprocessor, visualizer, {{"tensor", "receivers"}});
-    // add_flow(replayer, visualizer, {{"", "receivers"}});
+    // add_flow(source, visualizer, {{"video_buffer_output", "receivers"}});
  
-    auto recorder_resize = make_operator<ops::FormatConverterOp>(
-        "recorder_resize",
-        from_config("recorder_resize"),
-        Arg("pool") = make_resource<UnboundedAllocator>("pool_recorder_resize"),
-        Arg("cuda_stream_pool") = cuda_stream_pool);
+    // auto recorder_resize = make_operator<ops::FormatConverterOp>(
+    //     "recorder_resize",
+    //     from_config("recorder_resize"),
+    //     Arg("pool") = make_resource<UnboundedAllocator>("pool_recorder_resize"),
+    //     Arg("cuda_stream_pool") = cuda_stream_pool);
 
-    auto recorder = make_operator<ops::VideoStreamRecorderOp>(
-        "recorder",
-        from_config("recorder"));
+    // auto recorder = make_operator<ops::VideoStreamRecorderOp>(
+    //     "recorder",
+    //     from_config("recorder"));
 
 
 
     // Connect postprocessor output to resize converter then recorder
-    add_flow(postprocessor, recorder_resize, {{"tensor", "source_video"}});
-    add_flow(recorder_resize, recorder);
+    // add_flow(postprocessor, recorder_resize, {{"tensor", "source_video"}});
+    // add_flow(recorder_resize, recorder);
   }
 };
 

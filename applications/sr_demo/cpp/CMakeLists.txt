@@ -20,10 +20,10 @@ project(sr_demo CXX CUDA)
 find_package(holoscan 2.3 REQUIRED CONFIG
              PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
 
-
 add_executable(sr_demo
   main.cpp
 )
+
 target_link_libraries(sr_demo
   PRIVATE
   holoscan::core
@@ -36,7 +36,10 @@ target_link_libraries(sr_demo
   holoscan::ops::inference_processor
 )
 
-# Copy config file
+target_link_libraries(sr_demo PRIVATE $<TARGET_NAME_IF_EXISTS:holoscan::aja>)
+
+
+# Copy config files
 add_custom_target(sr_demo_yaml
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sr_demo.yaml" ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS "sr_demo.yaml"

@@ -14,8 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ---
+# Source configuration - choose between 'aja' or 'replayer'
+source:
+  type: "aja"  # Options: "aja" or "replayer"
+
 dual_window: false
 
+# AJA source configuration (used when source.type = "aja")
+aja:
+  device: 0                    # AJA device specifier
+  channel: NTV2_CHANNEL1       # NTV2 channel to use
+  width: 1920                    # Video width
+  height: 1080                   # Video height
+  framerate: 60                  # Video framerate
+  interlaced: false              # Interlaced or progressive
+  rdma: true                    # Enable RDMA
+  enable_overlay: false          # Enable overlay channel
+  overlay_channel: NTV2_CHANNEL2 # Overlay channel
+  overlay_rdma: true            # Enable RDMA for overlay
+
+# Replayer configuration (used when source.type = "replayer")
 replayer:
   directory: "/workspace/holohub/data/ch2_concatClear"
   basename: "ch2_concatClear"
@@ -28,9 +46,10 @@ drop_alpha:
   in_dtype: "rgba8888"
   out_dtype: "rgb888"
 
-
 inference_preprocessor:
   in_dtype: "rgb888"
+  resize_width: 1920
+  resize_height: 1088
   out_tensor_name: INPUT__0
   out_dtype: "float32"
   scale_min: -1
@@ -39,7 +58,7 @@ inference_preprocessor:
 
 sr_inference:
   model_path_map:
-    "sr": "/workspace/holohub/data/sr_upsampling/model_1080p-4k.onnx"
+    "sr": "/workspace/holohub/data/sr/model_1080p-4k.engine"
   backend: "trt"
   pre_processor_map:
     "sr": ["INPUT__0"]
@@ -50,7 +69,7 @@ sr_inference:
   device_map:
     "sr": "0"
   input_on_cuda: true
-  is_engine_path: false
+  is_engine_path: true
   enable_fp16: true
 
 inference_postprocessor:
@@ -62,8 +81,8 @@ inference_postprocessor:
   scale_max: 1
 
 holoviz:
-  width: 1920
-  height: 1080
+  width: 3840
+  height: 2160
   tensors:
     - name: ""
       type: color
