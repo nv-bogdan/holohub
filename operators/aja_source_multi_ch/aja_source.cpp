@@ -25,6 +25,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <thread>
+#include <chrono>
 
 #include "gxf/multimedia/video.hpp"
 #include "holoscan/core/condition.hpp"
@@ -894,14 +896,35 @@ void AJASourceMultiChannelOp::stop() {
     device_.UnsubscribeInputVerticalEvent(channel);
   }
   
-  device_.DMABufferUnlockAll();
-
-  if (enable_overlay_) { 
+  // Clear overlay displays before shutdown to prevent artifacts
+  if (enable_overlay_) {
+    // Clear overlay frame buffers by writing black/transparent data
+    auto size = GetVideoWriteSize(video_format_, pixel_format_);
+    std::vector<ULWord> black_frame(size / sizeof(ULWord), 0);  // All zeros = black/transparent
+    
+    for (size_t i = 0; i < overlay_channels_.size(); ++i) {
+      uint32_t hw_overlay_frame = i + 2;  // 2 for first overlay, 3 for second
+      
+      // Write black frame to clear the overlay
+      device_.DMAWriteFrame(hw_overlay_frame, black_frame.data(), size);
+      
+      // Force a frame update to ensure the clear is visible
+      device_.SetOutputFrame(overlay_channels_[i], hw_overlay_frame);
+      
+      HOLOSCAN_LOG_INFO("Cleared overlay frame {} for channel {}", hw_overlay_frame, i + 1);
+    }
+    
+    // Disable mixers after clearing
     device_.SetMixerMode(0, NTV2MIXERMODE_FOREGROUND_OFF);  // Disable Mixer1
     if (overlay_channels_.size() > 1) {
       device_.SetMixerMode(1, NTV2MIXERMODE_FOREGROUND_OFF);  // Disable Mixer2
     }
+    
+    // Wait a bit for the clear to take effect
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
+  
+  device_.DMABufferUnlockAll();
 
   // Free buffers for all channels
   for (auto& channel_buffers : channel_buffers_) {
