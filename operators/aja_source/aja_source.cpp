@@ -433,10 +433,8 @@ AJAStatus AJASourceOp::SetupVideo() {
       device_.SetMixerBGMatteEnabled(mixer_index, false);
       
       // Set mixer reference based on VSync signal availability
-      device_.SetReference(NTV2_REFERENCE_INPUT2);
+      device_.SetReference(NTV2_REFERENCE_INPUT3);
       
-      device_.SetMixerReference(mixer_index, ref_source);
-
       // Setup routing (overlay frame to CSC, CSC and SDI input to mixer, mixer to SDI output).
       NTV2OutputDestination output_dst = ::NTV2ChannelToOutputDestination(overlay_channel);
       
