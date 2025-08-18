@@ -35,11 +35,17 @@ extensions:
 # Uncomment the following extension when using yuan as source
 #  - lib/gxf_extensions/libgxf_qcap_source.so
 
+# Scheduler configuration
+multi_thread_scheduler:
+  worker_thread_number: 8
+  stop_on_deadlock: true
+  stop_on_deadlock_timeout: 500
+
 postprocessor: "tool_tracking_postprocessor" # "slang_shader" or "tool_tracking_postprocessor"
 
 aja:
-  channels: [NTV2_CHANNEL1]
-  overlay_channels: [NTV2_CHANNEL3]
+  channels: [NTV2_CHANNEL1, NTV2_CHANNEL3]
+  overlay_channels: [NTV2_CHANNEL2, NTV2_CHANNEL4]
   width: 1920
   height: 1080
   framerate: 60

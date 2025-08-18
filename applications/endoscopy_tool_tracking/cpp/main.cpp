@@ -46,6 +46,7 @@ class App : public holoscan::Application {
 
     std::shared_ptr<Operator> source;
     std::shared_ptr<Operator> visualizer_operator;
+    std::shared_ptr<Operator> visualizer_operator_2;
 
     const bool use_rdma = from_config("aja.rdma").as<bool>();
     const bool overlay_enabled = from_config("aja.enable_overlay").as<bool>();
@@ -68,16 +69,21 @@ class App : public holoscan::Application {
     source_block_size = width * height * 4 * 4;
     source_num_blocks = use_rdma ? 3 : 4;
 
-    const std::shared_ptr<CudaStreamPool> cuda_stream_pool =
-        make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 5);
+      const std::shared_ptr<CudaStreamPool> cuda_stream_pool =
+      make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 12);  // Increased from 5 to 12 streams
 
     auto format_converter =
         make_operator<ops::FormatConverterOp>("format_converter",
                                               from_config("format_converter_aja"),
                                               Arg("pool") = make_resource<BlockMemoryPool>(
-                                                  "pool", 1, source_block_size, source_num_blocks),
+                                                  "pool_1", 1, source_block_size, source_num_blocks),
                                               Arg("cuda_stream_pool") = cuda_stream_pool);
-
+    auto format_converter_2 =
+        make_operator<ops::FormatConverterOp>("format_converter_2",
+                                              from_config("format_converter_aja"),
+                                              Arg("pool") = make_resource<BlockMemoryPool>(
+                                                  "pool_2", 1, source_block_size, source_num_blocks),
+                                              Arg("cuda_stream_pool") = cuda_stream_pool);
     const std::string model_file_path = datapath + "/tool_loc_convlstm.onnx";
     const std::string engine_cache_dir = datapath + "/engines";
 
@@ -89,7 +95,16 @@ class App : public holoscan::Application {
         Arg("model_file_path", model_file_path),
         Arg("engine_cache_dir", engine_cache_dir),
         Arg("pool") = make_resource<BlockMemoryPool>(
-            "pool", 1, lstm_inferer_block_size, lstm_inferer_num_blocks),
+            "pool_lstm_1", 1, lstm_inferer_block_size, lstm_inferer_num_blocks),
+        Arg("cuda_stream_pool") = cuda_stream_pool);
+
+    auto lstm_inferer_2 = make_operator<ops::LSTMTensorRTInferenceOp>(
+        "lstm_inferer_2",
+        from_config("lstm_inference"),
+        Arg("model_file_path", model_file_path),
+        Arg("engine_cache_dir", engine_cache_dir),
+        Arg("pool") = make_resource<BlockMemoryPool>(
+            "pool_lstm_2", 1, lstm_inferer_block_size, lstm_inferer_num_blocks),
         Arg("cuda_stream_pool") = cuda_stream_pool);
 
     // the tool tracking post process outputs
@@ -99,8 +114,14 @@ class App : public holoscan::Application {
         std::max(107 * 60 * 7 * 4 * sizeof(float), 7 * 3 * sizeof(float));
     const uint64_t tool_tracking_postprocessor_num_blocks = 2 * 2;
     std::shared_ptr<Operator> tool_tracking_postprocessor;
+    std::shared_ptr<Operator> tool_tracking_postprocessor_2;
     std::shared_ptr<BlockMemoryPool> postprocessor_allocator =
         make_resource<BlockMemoryPool>("device_allocator",
+                                       1,
+                                       tool_tracking_postprocessor_block_size,
+                                       tool_tracking_postprocessor_num_blocks);
+    std::shared_ptr<BlockMemoryPool> postprocessor_allocator_2 =
+        make_resource<BlockMemoryPool>("device_allocator_2",
                                        1,
                                        tool_tracking_postprocessor_block_size,
                                        tool_tracking_postprocessor_num_blocks);
@@ -109,10 +130,17 @@ class App : public holoscan::Application {
           "slang_postprocessor",
           Arg("shader_source_file", app_path_ + "/postprocessor.slang"),
           Arg("allocator") = postprocessor_allocator);
+      tool_tracking_postprocessor_2 = make_operator<ops::SlangShaderOp>(
+          "slang_postprocessor_2",
+          Arg("shader_source_file", app_path_ + "/postprocessor.slang"),
+          Arg("allocator") = postprocessor_allocator_2);
     } else if (postprocessor_ == "tool_tracking_postprocessor") {
       tool_tracking_postprocessor = make_operator<ops::ToolTrackingPostprocessorOp>(
           "tool_tracking_postprocessor",
           Arg("device_allocator") = postprocessor_allocator);
+      tool_tracking_postprocessor_2 = make_operator<ops::ToolTrackingPostprocessorOp>(
+          "tool_tracking_postprocessor_2",
+          Arg("device_allocator") = postprocessor_allocator_2);
     } else {
       throw std::runtime_error("Invalid postprocessor: " + postprocessor_);
     }
@@ -128,22 +156,39 @@ class App : public holoscan::Application {
         Arg("allocator") = visualizer_allocator,
         Arg("cuda_stream_pool") = cuda_stream_pool);
 
-    // Flow definition
+    visualizer_operator_2 = make_operator<ops::HolovizOp>(
+        "holoviz_2",
+        from_config(overlay_enabled ? "holoviz_overlay" : "holoviz"),
+        Arg("width") = width,
+        Arg("height") = height,
+        Arg("enable_render_buffer_input") = overlay_enabled,
+        Arg("enable_render_buffer_output") = overlay_enabled,
+        Arg("allocator") = visualizer_allocator,
+        Arg("cuda_stream_pool") = cuda_stream_pool);
+
+    // Flow definition for Channel 1
     add_flow(lstm_inferer, tool_tracking_postprocessor, {{"tensor", "in"}});
     add_flow(tool_tracking_postprocessor, visualizer_operator, {{"out", "receivers"}});
-
-
     add_flow(source, format_converter, {{"video_buffer_output", "source_video"}});
-
     add_flow(format_converter, lstm_inferer);
 
+    // Flow definition for Channel 2
+    add_flow(lstm_inferer_2, tool_tracking_postprocessor_2, {{"tensor", "in"}});
+    add_flow(tool_tracking_postprocessor_2, visualizer_operator_2, {{"out", "receivers"}});
+    add_flow(source, format_converter_2, {{"video_buffer_output_2", "source_video"}});
+    add_flow(format_converter_2, lstm_inferer_2);
 
     if (overlay_enabled) {
-      // Overlay buffer flow between source and visualizer_operator
+      // Overlay buffer flow for Channel 1
       add_flow(source, visualizer_operator, {{"overlay_buffer_output", "render_buffer_input"}});
       add_flow(visualizer_operator, source, {{"render_buffer_output", "overlay_buffer_input"}});
+      
+      // Overlay buffer flow for Channel 2
+      add_flow(source, visualizer_operator_2, {{"overlay_buffer_output_2", "render_buffer_input"}});
+      add_flow(visualizer_operator_2, source, {{"render_buffer_output", "overlay_buffer_input_2"}});
     } else {
       add_flow(source, visualizer_operator, {{"video_buffer_output", "receivers"}});
+      add_flow(source, visualizer_operator_2, {{"video_buffer_output_2", "receivers"}});
     }
   }
 
@@ -229,6 +274,10 @@ int main(int argc, char** argv) {
 
   HOLOSCAN_LOG_INFO("Using input data from {}", data_directory);
   app->set_datapath(data_directory);
+
+  // Configure multithread scheduler from config
+  // app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
+  //   "multithread-scheduler", app->from_config("multi_thread_scheduler")));
 
   app->run();
 
