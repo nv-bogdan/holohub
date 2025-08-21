@@ -23,14 +23,14 @@ dual_window: false
 # AJA source configuration (used when source.type = "aja")
 aja:
   device: 0                    # AJA device specifier
-  channel: NTV2_CHANNEL1       # NTV2 channel to use
+  channel: NTV2_CHANNEL2      # NTV2 channel to use
   width: 1920                    # Video width
   height: 1080                   # Video height
   framerate: 60                  # Video framerate
   interlaced: false              # Interlaced or progressive
   rdma: true                    # Enable RDMA
   enable_overlay: false          # Enable overlay channel
-  overlay_channel: NTV2_CHANNEL2 # Overlay channel
+  overlay_channel: NTV2_CHANNEL4 # Overlay channel
   overlay_rdma: true            # Enable RDMA for overlay
 
 # Replayer configuration (used when source.type = "replayer")
