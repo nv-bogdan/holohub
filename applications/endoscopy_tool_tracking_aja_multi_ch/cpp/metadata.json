@@ -1,0 +1,43 @@
+{
+	"application": {
+		"name": "Endoscopy Tool Tracking",
+		"authors": [
+			{
+				"name": "Holoscan Team",
+				"affiliation": "NVIDIA"
+			}
+		],
+		"language": "C++",
+		"version": "1.0",
+		"changelog": {
+			"1.0": "Initial Release",
+			"2.0": "Update to support Holoscan SDK 2.1.0"
+		},
+		"holoscan_sdk": {
+			"minimum_required_version": "1.0.3",
+			"tested_versions": [
+				"1.0.3",
+				"2.0.0",
+				"2.1.0",
+				"2.2.0"
+			]
+		},
+		"platforms": ["x86_64", "aarch64"],
+		"tags": ["Healthcare AI", "Distributed", "LSTM", "Asynchronous Queues", "gRPC", "Video", "Computer Vision and Perception", "Visualization"],
+		"ranking": 0,
+		"dependencies": {
+			"data": [
+					{
+							"name": "Holoscan Sample App Data for AI-based Endoscopy Tool Tracking",
+							"description": "This resource contains the convolutional LSTM model for tool tracking in laparoscopic videos by Nwoye et. al [1], and a sample surgical video.",
+							"url": "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_endoscopy_sample_data",
+							"version": "20230222"
+					}
+			]
+		},
+		"run": {
+			"command": "<holohub_app_bin>/endoscopy_tool_tracking --data <holohub_data_dir>/endoscopy",
+			"workdir": "holohub_bin"
+		}
+	}
+}

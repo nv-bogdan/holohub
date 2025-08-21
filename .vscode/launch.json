@@ -1205,6 +1205,60 @@
             }
         },
         //#endregion multiai_ultrasound
+        //#region aja_video_capture
+        {
+            "name": "(gdb) aja_video_capture/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "preLaunchTask": "Build aja_video_capture",
+            "program": "${workspaceFolder}/build/aja_video_capture/applications/aja_video_capture/cpp/aja_capture",
+            "args": [],
+            "environment": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/aja_video_capture/applications/aja_video_capture/cpp",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "presentation": {
+                "hidden": false,
+                "group": "aja_video_capture",
+                "order": 1
+            }
+        },
+        {
+            "name": "(debugpy) aja_video_capture/python",
+            "type": "debugpy",
+            "request": "launch",
+            // "preLaunchTask": "Build aja_video_capture",
+            "program": "${workspaceFolder}/applications/aja_video_capture/python/aja_capture.py",
+            "args": [],
+            "cwd": "${workspaceFolder}/build/aja_video_capture/applications/aja_video_capture/python/",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/build/aja_video_capture/python/lib:${workspaceFolder}:${env:PYTHONPATH}"
+            },
+            "presentation": {
+                "hidden": true
+            }
+        },
+        {
+            "name": "(pythoncpp) aja_video_capture/python",
+            "type": "pythoncpp",
+            "request": "launch",
+            "pythonLaunchName": "(debugpy) aja_video_capture/python",
+            "cppConfig": "default (gdb) Attach",
+            "presentation": {
+                "hidden": false,
+                "group": "aja_video_capture",
+                "order": 2
+            }
+        },
+        //#endregion aja_video_capture        
         //#region nvidia_nim_nvclip
         {
             "name": "(debugpy) nvidia_nim_nvclip/python",

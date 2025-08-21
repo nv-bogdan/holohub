@@ -27,9 +27,16 @@ class App : public holoscan::Application {
     auto source = make_operator<ops::AJASourceOp>("aja", from_config("aja"),
                                 make_condition<CountCondition>(from_config("aja.count")));
     auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
+    auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz2"));
 
-    // Flow definition
+    // Flow definition - multi-channel setup
+    // The AJA source now provides individual outputs for each channel:
+    // - "video_buffer_output": first channel (NTV2_CHANNEL2)
+    // - "video_buffer_output_2": second channel (NTV2_CHANNEL4)
+    // - "overlay_buffer_output": first overlay channel (NTV2_CHANNEL1)
+    // - "overlay_buffer_output_2": second overlay channel (NTV2_CHANNEL3)
     add_flow(source, visualizer, {{"video_buffer_output", "receivers"}});
+    add_flow(source, visualizer2, {{"video_buffer_output_2", "receivers"}});
   }
 };
 
