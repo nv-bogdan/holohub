@@ -33,6 +33,8 @@ target_link_libraries(endoscopy_tool_tracking
   lstm_tensor_rt_inference
   tool_tracking_postprocessor
   holoscan::ops::slang_shader
+  holoscan::ops::inference
+  holoscan::ops::inference_processor
 )
 
 target_link_libraries(endoscopy_tool_tracking PRIVATE $<TARGET_NAME_IF_EXISTS:holoscan::aja_multi_ch>)

@@ -20,6 +20,8 @@
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/format_converter/format_converter.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
+#include <holoscan/operators/inference/inference.hpp>
+#include <holoscan/operators/inference_processor/inference_processor.hpp>
 #include <lstm_tensor_rt_inference.hpp>
 #include <slang_shader_op.hpp>
 #include <string>
@@ -159,6 +161,28 @@ class App : public holoscan::Application {
         Arg("allocator") = visualizer_allocator,
         Arg("cuda_stream_pool") = cuda_stream_pool);
 
+    // SR operators
+    auto visualizer_sr = make_operator<ops::HolovizOp>("holoviz_sr", from_config("holoviz_sr"),
+        Arg("cuda_stream_pool") = cuda_stream_pool);
+
+    auto inference = make_operator<ops::InferenceOp>(
+        "inference",
+        from_config("sr_inference"),
+        Arg("allocator") = make_resource<UnboundedAllocator>("pool_inference"));
+
+    auto drop_alpha =
+        make_operator<ops::FormatConverterOp>("drop_alpha", from_config("drop_alpha"),
+        Arg("pool") = make_resource<UnboundedAllocator>("pool_drop_alpha"));
+
+    auto preprocessor =
+        make_operator<ops::FormatConverterOp>("preprocessor", from_config("inference_preprocessor"),
+        Arg("pool") = make_resource<UnboundedAllocator>("pool_preprocessor"));
+
+    auto postprocessor =
+        make_operator<ops::FormatConverterOp>("postprocessor", from_config("inference_postprocessor"),
+        Arg("pool") = make_resource<UnboundedAllocator>("pool_postprocessor"));
+
+
     // Flow definition for Channel 1
     add_flow(lstm_inferer, tool_tracking_postprocessor, {{"tensor", "in"}});
     add_flow(tool_tracking_postprocessor, visualizer_operator, {{"out", "receivers"}});
@@ -183,6 +207,13 @@ class App : public holoscan::Application {
       add_flow(source, visualizer_operator, {{"video_buffer_output", "receivers"}});
       add_flow(source, visualizer_operator_2, {{"video_buffer_output_2", "receivers"}});
     }
+
+    // SR flow
+    add_flow(source, drop_alpha, {{"video_buffer_output_2", ""}});
+    add_flow(drop_alpha, preprocessor);
+    add_flow(preprocessor, inference, {{"", "receivers"}});
+    add_flow(inference, postprocessor);
+    add_flow(postprocessor, visualizer_sr, {{"tensor", "receivers"}});
   }
 
  private:

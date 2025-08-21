@@ -151,3 +151,63 @@ holoviz_overlay:
         - Clipper
         - Irrigator
         - Spec.Bag
+        
+# operators for SR
+drop_alpha:
+  in_dtype: "rgba8888"
+  out_dtype: "rgb888"
+
+inference_preprocessor:
+  in_dtype: "rgb888"
+  resize_width: 1920
+  resize_height: 1088
+  out_tensor_name: INPUT__0
+  out_dtype: "float32"
+  scale_min: -1
+  scale_max: 1
+  out_channel_order: [0,1,2]
+
+sr_inference:
+  model_path_map:
+    "sr": "/workspace/holohub/data/sr/model_1080p-4k.engine"
+  backend: "trt"
+  pre_processor_map:
+    "sr": ["INPUT__0"]
+  inference_map:
+    "sr": ["OUTPUT__0"]
+  in_tensor_names: ["INPUT__0"]
+  out_tensor_names: ["OUTPUT__0"]
+  device_map:
+    "sr": "0"
+  input_on_cuda: true
+  is_engine_path: true
+  enable_fp16: true
+
+inference_postprocessor:
+  in_dtype: "float32"
+  in_tensor_name: OUTPUT__0
+  out_tensor_name: ""
+  out_dtype: "rgb888"
+  scale_min: -1
+  scale_max: 1
+
+holoviz_sr:
+  width: 3840
+  height: 2160
+  tensors:
+    - name: ""
+      type: color
+      opacity: 1.0
+      priority: 0
+
+recorder_resize:
+  in_dtype: "rgb888"
+  out_dtype: "rgb888"
+  in_tensor_name: ""
+  out_tensor_name: "output_video"
+  resize_width: 3840
+  resize_height: 2160
+
+recorder:
+  directory: "/workspace/holohub/outputs"
+  basename: "sr_demo_output"
