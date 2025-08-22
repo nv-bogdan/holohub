@@ -73,24 +73,14 @@ class App : public holoscan::Application {
                                               from_config("format_converter_aja"),
                                               Arg("pool") = make_resource<BlockMemoryPool>(
                                                   "pool_1", 1, source_block_size, source_num_blocks),
-                                              Arg("cuda_stream_pool") = cuda_stream_pool);
-    format_converter->spec()->input<gxf::Entity>("source_video").condition(
-        holoscan::ConditionType::kMessageAvailable,
-        holoscan::Arg("min_size", static_cast<uint64_t>(1)),
-        holoscan::Arg("front_stage_max_size", static_cast<size_t>(1))
-    );
-    
+                                              Arg("cuda_stream_pool") = cuda_stream_pool);    
     auto format_converter_2 =
         make_operator<ops::FormatConverterOp>("format_converter_2",
                                               from_config("format_converter_aja"),
                                               Arg("pool") = make_resource<BlockMemoryPool>(
                                                   "pool_2", 1, source_block_size, source_num_blocks),
                                               Arg("cuda_stream_pool") = cuda_stream_pool);
-    format_converter_2->spec()->input<gxf::Entity>("source_video").condition(
-        holoscan::ConditionType::kMessageAvailable,
-        holoscan::Arg("min_size", static_cast<uint64_t>(1)),
-        holoscan::Arg("front_stage_max_size", static_cast<size_t>(1))
-    );
+                                              
     const std::string model_file_path = datapath + "/tool_loc_convlstm.onnx";
     const std::string engine_cache_dir = datapath + "/engines";
 
