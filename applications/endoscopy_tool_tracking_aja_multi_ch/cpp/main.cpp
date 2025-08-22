@@ -22,6 +22,7 @@
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/inference/inference.hpp>
 #include <holoscan/operators/inference_processor/inference_processor.hpp>
+#include <holoscan/core/gxf/entity.hpp>
 #include <lstm_tensor_rt_inference.hpp>
 #include <slang_shader_op.hpp>
 #include <string>
@@ -73,12 +74,23 @@ class App : public holoscan::Application {
                                               Arg("pool") = make_resource<BlockMemoryPool>(
                                                   "pool_1", 1, source_block_size, source_num_blocks),
                                               Arg("cuda_stream_pool") = cuda_stream_pool);
+    format_converter->spec()->input<gxf::Entity>("source_video").condition(
+        holoscan::ConditionType::kMessageAvailable,
+        holoscan::Arg("min_size", static_cast<uint64_t>(1)),
+        holoscan::Arg("front_stage_max_size", static_cast<size_t>(1))
+    );
+    
     auto format_converter_2 =
         make_operator<ops::FormatConverterOp>("format_converter_2",
                                               from_config("format_converter_aja"),
                                               Arg("pool") = make_resource<BlockMemoryPool>(
                                                   "pool_2", 1, source_block_size, source_num_blocks),
                                               Arg("cuda_stream_pool") = cuda_stream_pool);
+    format_converter_2->spec()->input<gxf::Entity>("source_video").condition(
+        holoscan::ConditionType::kMessageAvailable,
+        holoscan::Arg("min_size", static_cast<uint64_t>(1)),
+        holoscan::Arg("front_stage_max_size", static_cast<size_t>(1))
+    );
     const std::string model_file_path = datapath + "/tool_loc_convlstm.onnx";
     const std::string engine_cache_dir = datapath + "/engines";
 
@@ -299,9 +311,25 @@ int main(int argc, char** argv) {
   HOLOSCAN_LOG_INFO("Using input data from {}", data_directory);
   app->set_datapath(data_directory);
 
-  // Configure multithread scheduler from config
-  // app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
-  //   "multithread-scheduler", app->from_config("multi_thread_scheduler")));
+  // Configure scheduler from config
+  auto scheduler = app->from_config("scheduler").as<std::string>();
+  if (scheduler == "multi_thread") {
+    // use MultiThreadScheduler instead of the default GreedyScheduler
+    app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
+        "multithread-scheduler", app->from_config("multi_thread_scheduler")));
+  } else if (scheduler == "event_based") {
+    // use EventBasedScheduler instead of the default GreedyScheduler
+    app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
+        "event-based-scheduler", app->from_config("event_based_scheduler")));
+  } else if (scheduler == "greedy") {
+    app->scheduler(app->make_scheduler<holoscan::GreedyScheduler>(
+        "greedy-scheduler", app->from_config("greedy_scheduler")));
+  } else if (scheduler != "default") {
+    throw std::runtime_error(fmt::format(
+        "unrecognized scheduler option '{}', should be one of {'multi_thread', 'event_based', "
+        "'greedy', 'default'}",
+        scheduler));
+  }
 
   app->run();
 
