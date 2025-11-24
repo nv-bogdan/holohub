@@ -20,7 +20,19 @@ struct WorkflowConfig {
   std::map<std::string, bool> pending_enabled = {{"one", true}, {"two", true}, {"three", true}};
   bool edit_mode = false;
   bool apply_changes = false;
+  int current_stage = 0;  // Track which stage we're at (0 = start, 1-3 = after each op)
   std::mutex mutex;
+  
+  // Get list of enabled operators in order
+  std::vector<std::string> get_enabled_operators() const {
+    std::vector<std::string> enabled;
+    for (const auto& op : operator_order) {
+      if (operator_enabled.at(op)) {
+        enabled.push_back(op);
+      }
+    }
+    return enabled;
+  }
 };
 
 static std::shared_ptr<WorkflowConfig> g_config = std::make_shared<WorkflowConfig>();
@@ -40,6 +52,11 @@ class SourceOperator : public holoscan::Operator {
                holoscan::ExecutionContext&) override {
     int value = counter_++;
     std::cout << "Source: " << value << std::endl;
+    // Reset stage counter for new data
+    {
+      std::lock_guard<std::mutex> lock(g_config->mutex);
+      g_config->current_stage = 0;
+    }
     op_output.emit(value, "out");
   }
 
@@ -47,7 +64,7 @@ class SourceOperator : public holoscan::Operator {
   int counter_ = 0;
 };
 
-// Generic pass-through operator
+// Generic pass-through operator - tracks stage
 class PassThroughOperator : public holoscan::Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(PassThroughOperator)
@@ -63,6 +80,11 @@ class PassThroughOperator : public holoscan::Operator {
                holoscan::ExecutionContext&) override {
     auto value = op_input.receive<int>("in").value();
     std::cout << this->name() << ": " << value << std::endl;
+    // Increment stage after processing
+    {
+      std::lock_guard<std::mutex> lock(g_config->mutex);
+      g_config->current_stage++;
+    }
     op_output.emit(value, "out");
   }
 };
@@ -85,12 +107,12 @@ class SinkOperator : public holoscan::Operator {
   }
 };
 
-// Router Operator - dynamically routes based on configuration
-class RouterOperator : public holoscan::Operator {
+// Main Router Operator - routes based on current stage
+class MainRouterOperator : public holoscan::Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(RouterOperator)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(MainRouterOperator)
 
-  RouterOperator() = default;
+  MainRouterOperator() = default;
 
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input<int>("in");
@@ -202,7 +224,7 @@ class ImGuiVisualizer : public holoscan::Operator {
     
     // Source (fixed)
     ImGui::Text("Source:");
-    ImGui::SameLine(180);
+    ImGui::SameLine(220);
     if (source_val_ >= 0) {
       ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Value: %d", source_val_);
     } else {
@@ -277,7 +299,7 @@ class ImGuiVisualizer : public holoscan::Operator {
         
         std::string display_name = "Operator " + op_name;
         ImGui::Text("%s:", display_name.c_str());
-        ImGui::SameLine(180);
+        ImGui::SameLine(220);
         
         int value = -1;
         if (op_name == "one") value = one_val_;
@@ -297,7 +319,7 @@ class ImGuiVisualizer : public holoscan::Operator {
     
     // Sink (fixed)
     ImGui::Text("Sink:");
-    ImGui::SameLine(180);
+    ImGui::SameLine(220);
     if (sink_val_ >= 0) {
       ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Value: %d", sink_val_);
     } else {
@@ -362,24 +384,50 @@ class App : public holoscan::Application {
     // Create sink operator
     auto sink = make_operator<SinkOperator>("sink");
     
+    // Create main router for dynamic routing
+    auto router = make_operator<MainRouterOperator>("router");
+    
     // Create ImGui visualizer
     auto visualizer = make_operator<ImGuiVisualizer>("visualizer",
                                                        make_condition<holoscan::PeriodicCondition>("periodic", 
                                                                                                    holoscan::Arg("recess_period", std::string("30Hz"))));
 
-    // For now: simple static connections (we'll add dynamic flow later)
-    // Connect in default order: source -> one -> two -> three -> sink
-    add_flow(source, op_one, {{"out", "in"}});
-    add_flow(op_one, op_two, {{"out", "in"}});
-    add_flow(op_two, op_three, {{"out", "in"}});
-    add_flow(op_three, sink, {{"out", "in"}});
+    // Connect source to router
+    add_flow(source, router, {{"out", "in"}});
+    
+    // Connect all operators back to router (for next stage)
+    add_flow(op_one, router, {{"out", "in"}});
+    add_flow(op_two, router, {{"out", "in"}});
+    add_flow(op_three, router, {{"out", "in"}});
+    
+    // Set up dynamic routing from router
+    set_dynamic_flows(router, [op_one, op_two, op_three, sink](const std::shared_ptr<holoscan::Operator>& op) {
+      std::lock_guard<std::mutex> lock(g_config->mutex);
+      
+      auto enabled_ops = g_config->get_enabled_operators();
+      int stage = g_config->current_stage;
+      
+      std::cout << "[Router] Stage " << stage << ", enabled ops: " << enabled_ops.size() << std::endl;
+      
+      // Route based on current stage
+      if (stage < enabled_ops.size()) {
+        const auto& target_op = enabled_ops[stage];
+        std::cout << "[Router] Routing to operator: " << target_op << std::endl;
+        if (target_op == "one") op->add_dynamic_flow(op_one);
+        else if (target_op == "two") op->add_dynamic_flow(op_two);
+        else if (target_op == "three") op->add_dynamic_flow(op_three);
+      } else {
+        std::cout << "[Router] Routing to sink" << std::endl;
+        op->add_dynamic_flow(sink);
+      }
+    });
     
     // Connect to visualizer for monitoring
     add_flow(source, visualizer, {{"out", "source_in"}});
     add_flow(op_one, visualizer, {{"out", "one_in"}});
     add_flow(op_two, visualizer, {{"out", "two_in"}});
     add_flow(op_three, visualizer, {{"out", "three_in"}});
-    add_flow(op_three, visualizer, {{"out", "sink_in"}});
+    add_flow(router, visualizer, {{"out", "sink_in"}});
     
     add_operator(visualizer);
   }
