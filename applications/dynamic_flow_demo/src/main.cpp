@@ -18,8 +18,7 @@ struct WorkflowConfig {
   std::vector<std::string> pending_order = {"one", "two", "three"};
   std::map<std::string, bool> operator_enabled = {{"one", true}, {"two", true}, {"three", true}};
   std::map<std::string, bool> pending_enabled = {{"one", true}, {"two", true}, {"three", true}};
-  bool edit_mode = false;
-  bool apply_changes = false;
+  bool has_pending_changes = false;
   int current_stage = 0;  // Track which stage we're at (0 = start, 1-3 = after each op)
   std::mutex mutex;
   
@@ -145,7 +144,7 @@ class ImGuiVisualizer : public holoscan::Operator {
 
   void start() override {
     namespace viz = holoscan::viz;
-    viz::Init(1024, 768, "Holoscan Dynamic Workflow Editor");
+    viz::Init(500, 650, "Holoscan Dynamic Workflow Editor");
   }
 
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
@@ -184,39 +183,38 @@ class ImGuiVisualizer : public holoscan::Operator {
     ImGui::Separator();
     ImGui::Spacing();
     
-    // Edit/Apply button
-    if (g_config->edit_mode) {
-      if (ImGui::Button("Apply", ImVec2(100, 30))) {
-        g_config->apply_changes = true;
-        // Keep all operators in order, just update enabled/disabled state
-        g_config->operator_order = g_config->pending_order;
-        g_config->operator_enabled = g_config->pending_enabled;
-        g_config->edit_mode = false;
-        std::cout << "Applying workflow changes..." << std::endl;
-        
-        // Print new order (only enabled ones)
-        std::cout << "New active order: ";
-        bool first = true;
-        for (const auto& op : g_config->operator_order) {
-          if (g_config->operator_enabled[op]) {
-            if (!first) std::cout << " -> ";
-            std::cout << op;
-            first = false;
-          }
+    // Apply button (enabled only when there are pending changes)
+    ImGui::BeginDisabled(!g_config->has_pending_changes);
+    if (ImGui::Button("Apply", ImVec2(100, 30))) {
+      // Apply changes
+      g_config->operator_order = g_config->pending_order;
+      g_config->operator_enabled = g_config->pending_enabled;
+      g_config->has_pending_changes = false;
+      std::cout << "Applying workflow changes..." << std::endl;
+      
+      // Print new order (only enabled ones)
+      std::cout << "New active order: ";
+      bool first = true;
+      for (const auto& op : g_config->operator_order) {
+        if (g_config->operator_enabled[op]) {
+          if (!first) std::cout << " -> ";
+          std::cout << op;
+          first = false;
         }
-        if (first) std::cout << "(no operators)";
-        std::cout << std::endl;
       }
-      ImGui::SameLine();
-      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "EDIT MODE - Drag to reorder, check/uncheck to enable/disable");
-    } else {
-      if (ImGui::Button("Edit", ImVec2(100, 30))) {
-        g_config->edit_mode = true;
-        g_config->pending_order = g_config->operator_order;
-        g_config->pending_enabled = g_config->operator_enabled;
-        std::cout << "Entering edit mode..." << std::endl;
-      }
+      if (first) std::cout << "(no operators)";
+      std::cout << std::endl;
     }
+    ImGui::EndDisabled();
+    
+    if (g_config->has_pending_changes) {
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "*");
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Unsaved changes");
+    }
+    
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Drag to reorder, check/uncheck to enable/disable");
     
     ImGui::Spacing();
     ImGui::Separator();
@@ -237,88 +235,79 @@ class ImGuiVisualizer : public holoscan::Operator {
     ImGui::Text("    |");
     ImGui::Text("    v");
     
-    // Display operators based on mode
-    auto& display_order = g_config->edit_mode ? g_config->pending_order : g_config->operator_order;
+    // Always show draggable operators with enable/disable checkboxes
+    auto& display_order = g_config->pending_order;
     
-    if (g_config->edit_mode) {
-      // Edit mode: draggable operators with enable/disable checkboxes
-      for (int i = 0; i < display_order.size(); i++) {
-        ImGui::PushID(i);
-        
-        std::string op_name = display_order[i];
-        bool enabled = g_config->pending_enabled[op_name];
-        
-        // Checkbox for enable/disable
-        if (ImGui::Checkbox("", &enabled)) {
-          g_config->pending_enabled[op_name] = enabled;
-          std::cout << "Operator " << op_name << " " << (enabled ? "enabled" : "disabled") << std::endl;
-        }
-        ImGui::SameLine();
-        
-        // Draggable button (styled differently if disabled)
-        if (!enabled) {
-          ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
-          ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
-          ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        }
-        
-        std::string button_label = op_name + (enabled ? "" : " (disabled)");
-        ImGui::Button(button_label.c_str(), ImVec2(200, 40));
-        
-        if (!enabled) {
-          ImGui::PopStyleColor(3);
-        }
-        
-        // Drag source
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-          ImGui::SetDragDropPayload("OPERATOR", &i, sizeof(int));
-          ImGui::Text("Moving %s", display_order[i].c_str());
-          ImGui::EndDragDropSource();
-        }
-        
-        // Drop target
-        if (ImGui::BeginDragDropTarget()) {
-          if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OPERATOR")) {
-            int source_idx = *(const int*)payload->Data;
-            if (source_idx != i) {
-              std::swap(display_order[source_idx], display_order[i]);
-              std::cout << "Swapped: " << display_order[source_idx] << " <-> " << display_order[i] << std::endl;
-            }
+    for (int i = 0; i < display_order.size(); i++) {
+      ImGui::PushID(i);
+      
+      std::string op_name = display_order[i];
+      bool enabled = g_config->pending_enabled[op_name];
+      
+      // Checkbox for enable/disable
+      if (ImGui::Checkbox("", &enabled)) {
+        g_config->pending_enabled[op_name] = enabled;
+        g_config->has_pending_changes = true;
+        std::cout << "Operator " << op_name << " " << (enabled ? "enabled" : "disabled") << std::endl;
+      }
+      ImGui::SameLine();
+      
+      // Get current value for this operator
+      int op_value = -1;
+      if (op_name == "one") op_value = one_val_;
+      else if (op_name == "two") op_value = two_val_;
+      else if (op_name == "three") op_value = three_val_;
+      
+      // Draggable area using Selectable instead of Button
+      std::string item_label = op_name;
+      if (!enabled) item_label += " (disabled)";
+      
+      // Style the selectable differently if disabled
+      if (!enabled) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+      } else {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.26f, 0.59f, 0.98f, 0.4f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.59f, 0.98f, 0.6f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.26f, 0.59f, 0.98f, 0.8f));
+      }
+      
+      ImGui::Selectable(item_label.c_str(), false, 0, ImVec2(120, 40));
+      
+      ImGui::PopStyleColor(3);
+      
+      // Drag source - attach to the selectable
+      if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+        ImGui::SetDragDropPayload("OPERATOR", &i, sizeof(int));
+        ImGui::Text("Moving %s", display_order[i].c_str());
+        ImGui::EndDragDropSource();
+      }
+      
+      // Drop target
+      if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OPERATOR")) {
+          int source_idx = *(const int*)payload->Data;
+          if (source_idx != i) {
+            std::swap(display_order[source_idx], display_order[i]);
+            g_config->has_pending_changes = true;
+            std::cout << "Swapped: " << display_order[source_idx] << " <-> " << display_order[i] << std::endl;
           }
-          ImGui::EndDragDropTarget();
         }
-        
-        ImGui::PopID();
-        
-        if (enabled || i < display_order.size() - 1) {
-          ImGui::Text("    |");
-          ImGui::Text("    v");
-        }
+        ImGui::EndDragDropTarget();
       }
-    } else {
-      // Run mode: show enabled operators with values
-      for (const auto& op_name : display_order) {
-        // Only show if enabled
-        if (!g_config->operator_enabled[op_name]) continue;
-        
-        std::string display_name = "Operator " + op_name;
-        ImGui::Text("%s:", display_name.c_str());
-        ImGui::SameLine(220);
-        
-        int value = -1;
-        if (op_name == "one") value = one_val_;
-        else if (op_name == "two") value = two_val_;
-        else if (op_name == "three") value = three_val_;
-        
-        if (value >= 0) {
-          ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Value: %d", value);
-        } else {
-          ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Waiting...");
-        }
-        
-        ImGui::Text("    |");
-        ImGui::Text("    v");
+      
+      // Show value next to item
+      ImGui::SameLine();
+      if (op_value >= 0 && enabled) {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Value: %d", op_value);
+      } else if (enabled) {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Waiting...");
       }
+      
+      ImGui::PopID();
+      ImGui::Text("    |");
+      ImGui::Text("    v");
     }
     
     // Sink (fixed)
@@ -334,21 +323,21 @@ class ImGuiVisualizer : public holoscan::Operator {
     ImGui::Separator();
     ImGui::Spacing();
     
-    // Show current order (only enabled operators)
-    std::string order_str = "Current order: source -> ";
+    // Show active order (currently running)
+    std::string active_order_str = "Active workflow: source -> ";
     bool first = true;
     for (const auto& op : g_config->operator_order) {
       if (g_config->operator_enabled[op]) {
-        if (!first) order_str += " -> ";
-        order_str += op;
+        if (!first) active_order_str += " -> ";
+        active_order_str += op;
         first = false;
       }
     }
     if (first) {
-      order_str += "(no operators)";
+      active_order_str += "(no operators)";
     }
-    order_str += " -> sink";
-    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s", order_str.c_str());
+    active_order_str += " -> sink";
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s", active_order_str.c_str());
     
     ImGui::Spacing();
     ImGui::Text("Press ESC or close window to exit");
