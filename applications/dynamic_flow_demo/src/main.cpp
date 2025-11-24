@@ -149,7 +149,7 @@ class ImGuiVisualizer : public holoscan::Operator {
   }
 
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
-               holoscan::ExecutionContext&) override {
+               holoscan::ExecutionContext& context) override {
     namespace viz = holoscan::viz;
     
     // Receive values from all operators
@@ -167,6 +167,10 @@ class ImGuiVisualizer : public holoscan::Operator {
     if (sink_value) sink_val_ = sink_value.value();
     
     if (viz::WindowShouldClose()) {
+      std::cout << "Window closed, stopping application..." << std::endl;
+      // Shutdown visualization and exit cleanly
+      viz::Shutdown();
+      std::exit(0);
       return;
     }
 
