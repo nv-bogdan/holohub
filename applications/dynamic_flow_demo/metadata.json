@@ -4,8 +4,8 @@
 		"description": "A brief description of the project",
 		"authors": [
 			{
-				"name": "HoloHub User",
-				"affiliation": "Holoscan"
+				"name": "Bogdan Mitrea",
+				"affiliation": "NVIDIA"
 			}
 		],
 		"language": "cpp",
