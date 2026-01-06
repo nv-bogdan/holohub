@@ -33,6 +33,7 @@ struct WorkflowConfig {
   std::map<std::string, bool> pending_enabled = {{"one", true}, {"two", true}, {"three", true}};
   bool has_pending_changes = false;
   int current_stage = 0;  // Track which stage we're at (0 = start, 1-3 = after each op)
+  int power_exponent = 3;  // Exponent for operator "two" (2^exponent)
   std::mutex mutex;
   
   // Get list of enabled operators in order
@@ -98,6 +99,44 @@ class PassThroughOperator : public holoscan::Operator {
       g_config->current_stage++;
     }
     op_output.emit(value, "out");
+  }
+};
+
+// Power operator - computes 2^exponent where exponent is set via UI
+class PowerOperator : public holoscan::Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(PowerOperator)
+
+  PowerOperator() = default;
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input<int>("in");
+    spec.output<int>("out");
+  }
+
+  void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
+               holoscan::ExecutionContext&) override {
+    auto value = op_input.receive<int>("in").value();
+    
+    // Get exponent from config
+    int exponent;
+    {
+      std::lock_guard<std::mutex> lock(g_config->mutex);
+      exponent = g_config->power_exponent;
+    }
+    
+    // Calculate 2^exponent
+    int result = 1 << exponent;  // 2^exponent using bit shift
+    
+    std::cout << this->name() << ": input=" << value << ", 2^" << exponent << "=" << result << std::endl;
+    
+    // Increment stage after processing
+    {
+      std::lock_guard<std::mutex> lock(g_config->mutex);
+      g_config->current_stage++;
+    }
+    
+    op_output.emit(result, "out");
   }
 };
 
@@ -318,6 +357,19 @@ class ImGuiVisualizer : public holoscan::Operator {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Waiting...");
       }
       
+      // Add power exponent slider for operator "two"
+      if (op_name == "two" && enabled) {
+        ImGui::Indent(30.0f);
+        ImGui::PushItemWidth(150);
+        if (ImGui::SliderInt("Exponent", &g_config->power_exponent, 0, 20, "2^%d")) {
+          // Value changed - show preview
+        }
+        ImGui::SameLine();
+        ImGui::Text("= %d", 1 << g_config->power_exponent);
+        ImGui::PopItemWidth();
+        ImGui::Unindent(30.0f);
+      }
+      
       ImGui::PopID();
       ImGui::Text("    |");
       ImGui::Text("    v");
@@ -382,9 +434,9 @@ class App : public holoscan::Application {
                                                  make_condition<holoscan::PeriodicCondition>("periodic",
                                                                                              holoscan::Arg("recess_period", std::string("1Hz"))));
     
-    // Create three pass-through operators
+    // Create three operators (two uses PowerOperator)
     auto op_one = make_operator<PassThroughOperator>("one");
-    auto op_two = make_operator<PassThroughOperator>("two");
+    auto op_two = make_operator<PowerOperator>("two");
     auto op_three = make_operator<PassThroughOperator>("three");
     
     // Create sink operator
