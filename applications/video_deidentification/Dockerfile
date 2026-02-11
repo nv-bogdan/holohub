@@ -28,7 +28,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 #
 RUN pip3 install \
     easyocr \
-    opencv-python
+    opencv-python \
+    aiohttp \
+    aiortc
 
 # --------------------------------------------------------------------------
 #

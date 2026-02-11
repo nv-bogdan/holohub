@@ -13,10 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+import json
+import logging
 import math
 import os
+import ssl
 from argparse import ArgumentParser
 from itertools import combinations
+from threading import Thread
 
 import cupy as cp
 import cupyx.scipy.ndimage
@@ -33,7 +38,15 @@ from holoscan.operators import (
     V4L2VideoCaptureOp,
     VideoStreamReplayerOp,
 )
-from holoscan.resources import UnboundedAllocator
+from holoscan.resources import CudaStreamPool, UnboundedAllocator
+
+# WebRTC imports (optional - only needed for headless streaming)
+try:
+    from aiohttp import web
+    from operators.webrtc_server.webrtc_server_op import WebRTCServerOp
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    WEBRTC_AVAILABLE = False
 
 
 class boundingbox:
@@ -410,8 +423,163 @@ class ImageClipOp(Operator):
         op_output.emit(out_message, "out")
 
 
+# =============================================================================
+# WebRTC Web Server Thread (for headless streaming)
+# =============================================================================
+def parse_ice_strings(ice_server_strings):
+    """Convert ICE server strings to iceServers format."""
+    ice_server_list = []
+    for ice_string in ice_server_strings:
+        if "[" in ice_string:
+            parts = ice_string.split("[")
+            url = parts[0]
+            creds = parts[1].split(":")
+            username = creds[0]
+            password = creds[1][:-1]
+            ice_server = {"urls": url, "username": username, "credential": password}
+        else:
+            ice_server = {"urls": ice_string}
+        ice_server_list.append(ice_server)
+    return ice_server_list
+
+
+class WebAppThread(Thread):
+    """Web server thread for WebRTC streaming."""
+    
+    def __init__(self, webrtc_server_op, host, port, cert_file=None, key_file=None, ice_server=None):
+        super().__init__()
+        self._webrtc_server_op = webrtc_server_op
+        self._host = host
+        self._port = port
+
+        if cert_file:
+            self._ssl_context = ssl.SSLContext()
+            self._ssl_context.load_cert_chain(cert_file, key_file)
+        else:
+            self._ssl_context = None
+
+        self._ice_servers = []
+        if ice_server:
+            self._ice_servers = parse_ice_strings(ice_server)
+
+        app = web.Application()
+        app.on_shutdown.append(self._on_shutdown)
+        app.router.add_get("/", self._index)
+        app.router.add_get("/client.js", self._javascript)
+        app.router.add_post("/offer", self._offer)
+        app.router.add_get("/iceServers", self._get_ice_servers)
+
+        self._runner = web.AppRunner(app)
+
+    async def _on_shutdown(self, app):
+        self._webrtc_server_op.shutdown()
+
+    async def _index(self, request):
+        # Simple HTML page for viewing the stream
+        content = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Deidentification - WebRTC Stream</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
+        h1 { color: #76b900; }
+        video { max-width: 100%; border: 2px solid #76b900; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #76b900; border: none; color: #fff; }
+        button:hover { background: #5a9000; }
+        #status { margin: 10px 0; padding: 10px; background: #333; }
+    </style>
+</head>
+<body>
+    <h1>Video Deidentification - Live Stream</h1>
+    <div id="status">Status: Disconnected</div>
+    <video id="video" autoplay playsinline></video>
+    <br>
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+    <script src="client.js"></script>
+</body>
+</html>"""
+        return web.Response(content_type="text/html", text=content)
+
+    async def _javascript(self, request):
+        content = """
+var pc = null;
+
+async function start() {
+    document.getElementById('status').textContent = 'Status: Connecting...';
+    
+    // Get ICE servers
+    const iceResponse = await fetch('/iceServers');
+    const iceServers = await iceResponse.json();
+    
+    const config = { iceServers: iceServers.length > 0 ? iceServers : [{ urls: 'stun:stun.l.google.com:19302' }] };
+    pc = new RTCPeerConnection(config);
+    
+    pc.addEventListener('track', (evt) => {
+        document.getElementById('video').srcObject = evt.streams[0];
+        document.getElementById('status').textContent = 'Status: Streaming';
+    });
+    
+    pc.addEventListener('connectionstatechange', () => {
+        document.getElementById('status').textContent = 'Status: ' + pc.connectionState;
+    });
+    
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    
+    const response = await fetch('/offer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type })
+    });
+    const answer = await response.json();
+    await pc.setRemoteDescription(answer);
+}
+
+function stop() {
+    if (pc) {
+        pc.close();
+        pc = null;
+    }
+    document.getElementById('video').srcObject = null;
+    document.getElementById('status').textContent = 'Status: Disconnected';
+}
+
+document.getElementById('start').addEventListener('click', start);
+document.getElementById('stop').addEventListener('click', stop);
+"""
+        return web.Response(content_type="application/javascript", text=content)
+
+    async def _get_ice_servers(self, request):
+        return web.Response(content_type="application/json", text=json.dumps(self._ice_servers))
+
+    async def _offer(self, request):
+        params = await request.json()
+        (sdp, type) = await self._webrtc_server_op.offer(params["sdp"], params["type"])
+        return web.Response(
+            content_type="application/json",
+            text=json.dumps({"sdp": sdp, "type": type}),
+        )
+
+    def run(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(self._runner.setup())
+        site = web.TCPSite(self._runner, self._host, self._port, ssl_context=self._ssl_context)
+        logging.info(f"WebRTC server starting at http://{self._host}:{self._port}")
+        print(f"\n*** WebRTC stream available at: http://{self._host}:{self._port} ***\n")
+        loop.run_until_complete(site.start())
+        loop.run_forever()
+
+
+# =============================================================================
+# Main Application
+# =============================================================================
 class VideoDeidentificationApp(Application):
-    def __init__(self, data, source="v4l2", video_device="none"):
+    def __init__(self, data, source="v4l2", video_device="none", headless=False,
+                 webrtc_host="0.0.0.0", webrtc_port=8080, ice_server=None):
         """Initialize the video deidentification application"""
 
         super().__init__()
@@ -419,6 +587,10 @@ class VideoDeidentificationApp(Application):
         # set name
         self.name = "Video Deidentification App"
         self.source = source
+        self.headless = headless
+        self.webrtc_host = webrtc_host
+        self.webrtc_port = webrtc_port
+        self.ice_server = ice_server
 
         if data == "none":
             data = os.path.join(
@@ -502,8 +674,6 @@ class VideoDeidentificationApp(Application):
             **postprocessor_args,
         )
 
-        holoviz = HolovizOp(self, allocator=pool, name="holoviz", **self.kwargs("holoviz"))
-
         faceblur = BlurOp(self, name="faceblur", **self.kwargs("faceblur"))
         textdet = TextDetOp(self, name="textdet", **self.kwargs("textdet"))
         textblur = BlurOp(self, name="textblur", **self.kwargs("textblur"))
@@ -521,12 +691,78 @@ class VideoDeidentificationApp(Application):
         self.add_flow(faceblur, textblur, {("", "input_video")})
         self.add_flow(textdet, textblur, {("", "input_boxes")})
         self.add_flow(textblur, imageclip)
-        self.add_flow(imageclip, holoviz, {("out", "receivers")})
+
+        # Output: either HolovizOp (display) or WebRTC (headless streaming)
+        if self.headless and WEBRTC_AVAILABLE:
+            # Headless mode with WebRTC streaming
+            cuda_stream_pool = CudaStreamPool(
+                self,
+                name="cuda_stream_pool",
+                dev_id=0,
+                stream_flags=0,
+                stream_priority=0,
+                reserved_size=1,
+                max_size=5,
+            )
+
+            # HolovizOp in headless mode with render buffer output
+            holoviz = HolovizOp(
+                self,
+                allocator=pool,
+                name="holoviz",
+                headless=True,
+                enable_render_buffer_output=True,
+                cuda_stream_pool=cuda_stream_pool,
+                **self.kwargs("holoviz"),
+            )
+
+            # Convert render buffer to RGB for WebRTC
+            webrtc_format_converter = FormatConverterOp(
+                self,
+                name="webrtc_format_converter",
+                in_dtype="rgba8888",
+                out_dtype="rgb888",
+                cuda_stream_pool=cuda_stream_pool,
+                pool=pool,
+            )
+
+            # WebRTC server operator
+            webrtc_server = WebRTCServerOp(self, name="webrtc_server")
+
+            self.add_flow(imageclip, holoviz, {("out", "receivers")})
+            self.add_flow(holoviz, webrtc_format_converter, {("render_buffer_output", "source_video")})
+            self.add_flow(webrtc_format_converter, webrtc_server)
+
+            # Start web server in background thread
+            self._web_app_thread = WebAppThread(
+                webrtc_server,
+                self.webrtc_host,
+                self.webrtc_port,
+                ice_server=self.ice_server,
+            )
+            self._web_app_thread.start()
+
+        elif self.headless and not WEBRTC_AVAILABLE:
+            print("[WARN] WebRTC not available (missing aiohttp/aiortc). Running headless without output.")
+            print("[WARN] Install with: pip install aiohttp aiortc")
+            holoviz = HolovizOp(
+                self,
+                allocator=pool,
+                name="holoviz",
+                headless=True,
+                **self.kwargs("holoviz"),
+            )
+            self.add_flow(imageclip, holoviz, {("out", "receivers")})
+
+        else:
+            # Normal display mode
+            holoviz = HolovizOp(self, allocator=pool, name="holoviz", **self.kwargs("holoviz"))
+            self.add_flow(imageclip, holoviz, {("out", "receivers")})
 
 
 def main():
     # Parse args
-    parser = ArgumentParser(description="Face Detection Application.")
+    parser = ArgumentParser(description="Video Deidentification Application.")
     parser.add_argument(
         "-s",
         "--source",
@@ -556,15 +792,64 @@ def main():
         default="none",
         help=("The video device to use.  By default the application will use /dev/video0"),
     )
+    # Headless/WebRTC streaming options
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run in headless mode with WebRTC streaming (no display window)",
+    )
+    parser.add_argument(
+        "--webrtc-host",
+        default="0.0.0.0",
+        help="Host for WebRTC HTTP server (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--webrtc-port",
+        type=int,
+        default=8080,
+        help="Port for WebRTC HTTP server (default: 8080)",
+    )
+    parser.add_argument(
+        "--ice-server",
+        action="append",
+        help=(
+            "ICE server config in the form of `turn:<ip>:<port>[<username>:<password>]` "
+            "or `stun:<ip>:<port>`. Can be specified multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
+    )
 
     args = parser.parse_args()
+
+    # Configure logging
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
     if args.config == "none":
         config_file = os.path.join(os.path.dirname(__file__), "video_deidentification.yaml")
     else:
         config_file = args.config
 
-    app = VideoDeidentificationApp(args.data, args.source, args.video_device)
+    # Check WebRTC availability when headless mode is requested
+    if args.headless and not WEBRTC_AVAILABLE:
+        print("[WARN] WebRTC dependencies not installed. Install with: pip install aiohttp aiortc")
+        print("[WARN] Proceeding in headless mode without streaming...")
+
+    app = VideoDeidentificationApp(
+        args.data,
+        args.source,
+        args.video_device,
+        headless=args.headless,
+        webrtc_host=args.webrtc_host,
+        webrtc_port=args.webrtc_port,
+        ice_server=args.ice_server,
+    )
     app.config(config_file)
     app.run()
 

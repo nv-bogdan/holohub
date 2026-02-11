@@ -24,14 +24,21 @@ This application downloads a pre-recorded video from [Pexels](https://www.pexels
 
 ## Input
 
-This app currently supports three different input options:
+This app currently supports the following input options:
 
-1. v4l2 compatible input device (default, see V4L2 Support below)
-2. pre-recorded video (see Video Replayer Support below)
+1. V4L2 compatible input device (default, see V4L2 Support below)
+2. Pre-recorded video (see Video Replayer Support below)
+
+## Output
+
+This app supports two output modes:
+
+1. **Display mode** (default) - Renders output using HolovizOp to a window
+2. **Headless WebRTC mode** - Streams output to a web browser via WebRTC
 
 ## Run Instructions
 
-## V4L2 Support
+### V4L2 Support
 
 This application supports v4l2 compatible devices as input.  To run this application with your v4l2 compatible device,
 please plug in your input device and run:
@@ -46,7 +53,7 @@ running the application.  You can also override the default input device on the 
 ./holohub run video_deidentification --run-args="--video_device /dev/video0"
 ```
 
-## Video Replayer Support
+### Video Replayer Support
 
 If you don't have a v4l2 compatible device plugged in, you may also run this application on a pre-recorded video.
 To launch the application using the Video Stream Replayer as the input source, run:
@@ -55,7 +62,65 @@ To launch the application using the Video Stream Replayer as the input source, r
 ./holohub run video_deidentification --run-args="--source replayer"
 ```
 
-### Known Issues
+### Headless WebRTC Streaming
+
+This application supports headless operation with WebRTC streaming, allowing you to view the deidentified video in a web browser without requiring a display on the server.
+
+#### Prerequisites
+
+The WebRTC feature requires additional Python packages which are included in the application's Dockerfile:
+- `aiohttp` - Web server
+- `aiortc` - WebRTC implementation
+
+#### Running in Headless Mode
+
+To run the application in headless mode with WebRTC streaming:
+
+```sh
+# With video replayer
+./holohub run video_deidentification --docker-file applications/video_deidentification/Dockerfile \
+    --extra-docker-run-args="-p 8080:8080" \
+    --run-args="--headless --source replayer"
+
+# With V4L2 camera
+./holohub run video_deidentification --docker-file applications/video_deidentification/Dockerfile \
+    --extra-docker-run-args="-p 8080:8080 --device=/dev/video0" \
+    --run-args="--headless --source v4l2"
+```
+
+Then open a web browser and navigate to `http://localhost:8080` (or `http://<server-ip>:8080` from another machine). Click the **Start** button to begin viewing the stream.
+
+#### WebRTC Command-Line Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--headless` | (off) | Enable headless mode with WebRTC streaming |
+| `--webrtc-host HOST` | 0.0.0.0 | Web server host address |
+| `--webrtc-port PORT` | 8080 | Web server port |
+| `--ice-server URL` | (none) | ICE/TURN server config (can be repeated) |
+| `--verbose` | (off) | Enable verbose logging |
+
+#### Using a TURN Server
+
+For containerized or NAT environments, you may need a TURN server:
+
+```sh
+# Start TURN server (on host machine)
+docker run -d --rm --network=host instrumentisto/coturn \
+    -n --log-file=stdout \
+    --external-ip=$HOST_IP \
+    --listening-ip=$HOST_IP \
+    --lt-cred-mech --fingerprint \
+    --user=admin:admin \
+    --realm=default.realm.org
+
+# Run app with TURN server
+./holohub run video_deidentification --docker-file applications/video_deidentification/Dockerfile \
+    --extra-docker-run-args="-p 8080:8080" \
+    --run-args="--headless --ice-server turn:$HOST_IP:3478[admin:admin]"
+```
+
+## Known Issues
 
 There is a known issue running this application on IGX w/ iGPU and on Jetson AGX (see [#500](https://github.com/nvidia-holoscan/holohub/issues/500)).
 The workaround is to update the device to avoid picking up the libnvv4l2.so library.
